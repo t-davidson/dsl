@@ -11,7 +11,7 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   alpha_h <- 1 - (1 - ci)/2
   ci_low  <- object[[1]] - qnorm(alpha_h)*object[[2]]
   ci_high <- object[[1]] + qnorm(alpha_h)*object[[2]]
-  p_v <- 1 - pnorm(abs(object[[1]]/object[[2]]))
+  p_v <- 2 * pnorm(abs(object[[1]]/object[[2]]), lower.tail = FALSE)
   out_tab <- cbind(object[[1]], object[[2]], ci_low, ci_high, p_v)
   colnames(out_tab) <- c("Estimate", "Std. Error", "CI Lower", "CI Upper", "p value")
   if(nrow(out_tab) == 1){
