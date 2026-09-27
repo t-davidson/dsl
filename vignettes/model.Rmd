@@ -19,11 +19,15 @@ output:
 
 - [**`fepois`: Fixed Effects Poisson Regression**](#fepois) <br>
 
+- [**`negbin`: Negative Binomial Regression**](#negbin) <br>
+
+- [**`fenegbin`: Fixed Effects Negative Binomial Regression**](#fenegbin) <br>
+
 
 </div>
 </div>
 
-Note: We currently cover five models (`lm`, `logit`, `poisson`, `felm`, `fepois`). In the next update, we are planning to add more models, including multinomial-logit regression and two-stage least squares for the instrumental variable method. 
+Note: We currently cover seven models (`lm`, `logit`, `poisson`, `felm`, `fepois`, `negbin`, `fenegbin`). In the next update, we are planning to add more models, including multinomial-logit regression and two-stage least squares for the instrumental variable method. 
 
 <br>
 
@@ -51,7 +55,7 @@ out_lm <- dsl(model = "lm",
 
 | Argument | Description              |
 |:-------- | :------------------------|
-|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), `poisson` (Poisson regression), `felm` (fixed-effects regression), and `fepois` (fixed-effects Poisson regression).|
+|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), `poisson` (Poisson regression), `felm` (fixed-effects regression), `fepois` (fixed-effects Poisson regression), `negbin` (negative binomial regression), and `fenegbin` (fixed-effects negative binomial regression).|
 |`formula` | A formula used in the specified regression model.|
 |`predicted_var` | A vector of column names in the data that correspond to variables that need to be predicted.|
 |`prediction` | A vector of column names in the data that correspond to predictions of `predicted_var`. |
@@ -201,3 +205,46 @@ summary(out_fepois)
 As in `model = "poisson"`, coefficients are on the log scale and the estimator is Poisson Pseudo Maximum Likelihood (PPML), which allows overdispersed and non-integer outcomes. `fixed_effect = "oneway"` with one element in `index` implements one-way fixed effects.
 
 We recommend `model = "fepois"` over adding fixed effects as dummy variables (e.g., `factor(unit)`) to `model = "poisson"`. The DSL estimator of the fixed effect of each group relies on the DSL-corrected sum of the outcome within the group. When a group is small, one labeled observation with a large prediction error can make this sum negative, and the fixed effect (the log of a negative number) is not defined. `model = "fepois"` estimates the fixed effects on the exponentiated scale, where they are defined even in such cases, and concentrates out the fixed effects of the index with more levels (with `fixed_effect = "twoways"`, the fixed effects of the other index are estimated together with the coefficients). When all fixed effects are defined, it gives the same estimates and standard errors as the dummy-variable approach. 
+
+<br>
+
+### **`negbin`: Negative Binomial Regression**{#negbin} 
+<p class="lh-lg">
+</p>
+
+Researchers can implement DSL negative binomial regression for overdispersed count outcomes (the variance is larger than the mean) by specifying `model = "negbin"`. It requires the same arguments as `model = "poisson"`. The outcome in `data_poisson` is overdispersed.
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+out_negbin <- dsl(model = "negbin", 
+                  formula = Y ~ X1 + X2 + X3 + X4,
+                  predicted_var = "Y",
+                  prediction = "pred_Y",
+                  data = data_poisson)
+summary(out_negbin)
+```
+
+The negative binomial model assumes `Var(Y | X) = mu + mu^2/theta`, where `theta` is the dispersion parameter (reported at the bottom of `summary()` and stored in `out_negbin$theta`). Coefficients are on the log scale, as in `model = "poisson"`. They are estimated by maximum likelihood, and `theta` is estimated by maximum likelihood using the labeled observations (predictions carry no information about the dispersion of the outcome). Because standard errors are robust (sandwich), the coefficients and their standard errors remain valid when the expected count is correctly specified, even if the outcome does not follow the negative binomial distribution. 
+
+
+<br>
+
+### **`fenegbin`: Fixed Effects Negative Binomial Regression**{#fenegbin} 
+<p class="lh-lg">
+</p>
+
+Researchers can implement DSL fixed effects negative binomial regression by specifying `model = "fenegbin"`. It uses the same arguments as `model = "fepois"` (`fixed_effect`, `index`, and `cluster`). 
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+out_fenegbin <- dsl(model = "fenegbin", 
+                    formula = Y ~ X1 + X2,
+                    predicted_var = "Y",
+                    prediction = "pred_Y",
+                    fixed_effect = "twoways", 
+                    index = c("unit", "year"), 
+                    cluster = "unit",
+                    data = data_fepois)
+summary(out_fenegbin)
+```
+
+Fixed effects are handled as in `model = "fepois"`. The coefficients solve the moments of `fepois` weighted by the negative binomial weights `theta/(theta + mu)`, and `theta` is estimated by maximum likelihood using the labeled observations. In maximum likelihood (e.g., `fixest::fenegbin`), `mu` in the weights uses the estimated fixed effects. With DSL, the fixed effect of a group depends heavily on its few labeled observations (weighted by the inverse of the sampling probability), and weights that depend on them bias the coefficients (the incidental parameter problem). Thus, `fenegbin` computes `mu` in the weights with fixed effects estimated only from predictions. The moments are then valid for any weights, as in `model = "fepois"`, and the weights only affect efficiency.
+
