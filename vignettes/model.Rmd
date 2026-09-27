@@ -13,13 +13,15 @@ output:
 
 - [**`logit`: Logistic Regression**](#logit) <br>
 
+- [**`poisson`: Poisson Regression**](#poisson) <br>
+
 - [**`felm`: Fixed Effects Linear Regression**](#felm) <br>
 
 
 </div>
 </div>
 
-Note: We currently cover three models (`lm`, `logit`, `felm`). In the next update, we are planning to add more models, including multinomial-logit regression, poisson regression, and two-stage least squares for the instrumental variable method. 
+Note: We currently cover four models (`lm`, `logit`, `poisson`, `felm`). In the next update, we are planning to add more models, including multinomial-logit regression and two-stage least squares for the instrumental variable method. 
 
 <br>
 
@@ -47,7 +49,7 @@ out_lm <- dsl(model = "lm",
 
 | Argument | Description              |
 |:-------- | :------------------------|
-|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), and `felm` (fixed-effects regression).|
+|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), `poisson` (Poisson regression), and `felm` (fixed-effects regression).|
 |`formula` | A formula used in the specified regression model.|
 |`predicted_var` | A vector of column names in the data that correspond to variables that need to be predicted.|
 |`prediction` | A vector of column names in the data that correspond to predictions of `predicted_var`. |
@@ -80,6 +82,32 @@ out_logit <- dsl(model = "logit",
                  data = data_logit)
 summary(out_logit)
 ```
+
+<br>
+
+### **`poisson`: Poisson Regression**{#poisson} 
+<p class="lh-lg">
+</p>
+
+Researchers can implement DSL Poisson regression for count outcomes by specifying `model = "poisson"`. It requires the same arguments as `model = "lm"`. 
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+data("data_poisson") # example data 
+head(data_poisson)
+```
+
+In this example, variable `Y` is a count (e.g., the number of times a topic is mentioned in a document) that requires text annotation (it takes `NA` if a given observation is not labeled by experts). Variable `pred_Y` represents predicted counts for `Y`.
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+out_poisson <- dsl(model = "poisson", 
+                   formula = Y ~ X1 + X2 + X3 + X4,
+                   predicted_var = "Y",
+                   prediction = "pred_Y",
+                   data = data_poisson)
+summary(out_poisson)
+```
+
+As in a standard Poisson regression, coefficients are on the log scale, and `exp()` of a coefficient is the multiplicative change in the expected count (the incidence rate ratio). Because `dsl` estimates standard errors with the robust (sandwich) variance, `model = "poisson"` is Poisson Pseudo Maximum Likelihood (PPML). It only assumes that the expected count is `exp()` of the linear predictor, so the outcome does not need to follow a Poisson distribution (e.g., overdispersed counts are allowed) or be an integer. It should be non-negative.
 
 <br>
 

@@ -24,7 +24,7 @@ dsl(
 )
 }
 \arguments{
-\item{model}{A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), and \code{felm} (fixed-effects regression).}
+\item{model}{A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), and \code{felm} (fixed-effects regression).}
 
 \item{formula}{A formula used in the specified regression model.}
 

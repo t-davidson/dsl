@@ -37,6 +37,7 @@ reference:
   - PanChen
   - data_lm
   - data_logit
+  - data_poisson
   - data_felm
   - data_unequal
   - data_post

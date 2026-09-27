@@ -96,21 +96,39 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
 
   inioptim <- rep(0, ncol(X_orig_use))
 
-  est0 <- optim(par = inioptim,
-                fn = dsl_general_moment,
-                labeled_ind = labeled_ind,
-                sample_prob_use = sample_prob_use,
-                Y_orig = Y_orig,
-                X_orig = X_orig_use,
-                Y_pred = Y_pred,
-                X_pred = X_pred_use,
-                fe_Y = fe_Y,
-                fe_X = fe_X,
-                lambda = lambda,
-                model = model,
-                method = optim_method,
-                hessian = FALSE,
-                control = list(maxit = 5000))$par
+  if(model == "poisson"){
+    # (poisson) Start the intercept at log of the DSL estimate of E(Y), which solves the moment conditions when all slopes are zero
+    Y_dr <- Y_pred + ifelse(labeled_ind == 1, Y_orig - Y_pred, 0) * as.numeric(labeled_ind/sample_prob_use)
+    if(with_intercept == TRUE & mean(Y_dr) > 0){
+      inioptim[1] <- log(mean(Y_dr))
+    }
+
+    # (poisson) exp() makes `optim` unstable (overflow). We solve the same moment conditions with Newton-Raphson
+    est0 <- dsl_general_newton(par = inioptim,
+                               labeled_ind = labeled_ind,
+                               sample_prob_use = sample_prob_use,
+                               Y_orig = Y_orig,
+                               X_orig = X_orig_use,
+                               Y_pred = Y_pred,
+                               X_pred = X_pred_use,
+                               model = model)
+  }else{
+    est0 <- optim(par = inioptim,
+                  fn = dsl_general_moment,
+                  labeled_ind = labeled_ind,
+                  sample_prob_use = sample_prob_use,
+                  Y_orig = Y_orig,
+                  X_orig = X_orig_use,
+                  Y_pred = Y_pred,
+                  X_pred = X_pred_use,
+                  fe_Y = fe_Y,
+                  fe_X = fe_X,
+                  lambda = lambda,
+                  model = model,
+                  method = optim_method,
+                  hessian = FALSE,
+                  control = list(maxit = 5000))$par
+  }
   names(est0) <- colnames(X_orig_use)
 
   # ###################################################
@@ -240,6 +258,8 @@ dsl_general_moment <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
     m_dr   <- lm_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
   }else if(model == "logit"){
     m_dr   <- logit_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+  }else if(model == "poisson"){
+    m_dr   <- poisson_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
   }else if(model == "felm"){
     m_dr   <- felm_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_Y, fe_X)
   }
@@ -248,6 +268,58 @@ dsl_general_moment <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
   g_out <- sum(g^2) + lambda*mean(par^2) # penalty
 
   return(g_out)
+}
+
+# ###############
+# Newton-Raphson
+# ###############
+# Solves m_n(theta) = 0 by Newton-Raphson, using the analytical Jacobian (also used for the variance).
+# Steps are halved until the objective in `dsl_general_moment`, sum(m_n(theta)^2), decreases.
+# The Newton step is always a descent direction of this objective.
+dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model,
+                               tol = 1e-8, maxit = 100){
+
+  moment_mean <- function(par){
+    if(model == "poisson"){
+      m_dr <- poisson_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+    }
+    return(apply(m_dr, 2, mean)) # m_n(theta) in equation (6)
+  }
+
+  g   <- moment_mean(par)
+  obj <- sum(g^2)
+  converged <- FALSE
+  for(iter in 1:maxit){
+    J <- dsl_general_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
+    step <- as.numeric(solve(J, g)) # J is -d m_n(theta)/d theta
+    if(max(abs(step)) < tol){
+      converged <- TRUE
+      break
+    }
+
+    # step-halving
+    step_size <- 1
+    improved  <- FALSE
+    while(step_size > 1e-10){
+      par_new <- par + step_size*step
+      g_new   <- moment_mean(par_new)
+      obj_new <- sum(g_new^2)
+      if(is.finite(obj_new) & obj_new < obj){
+        improved <- TRUE
+        break
+      }
+      step_size <- step_size/2
+    }
+    if(improved == FALSE){
+      break
+    }
+    par <- par_new; g <- g_new; obj <- obj_new
+  }
+
+  if(converged == FALSE){
+    warning(" Newton-Raphson did not converge. Estimates may be unreliable. ")
+  }
+  return(par)
 }
 
 # dsl_general_Meat <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, clustered, cluster){
@@ -287,6 +359,10 @@ dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_
   }else if(model == "logit"){
     m_orig <- logit_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
     m_pred <- logit_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+
+  }else if(model == "poisson"){
+    m_orig <- poisson_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+    m_pred <- poisson_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
 
   }else if(model == "felm"){ # we can use the same function as "lm"
     m_orig <- lm_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
@@ -362,6 +438,8 @@ dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_or
     J   <- lm_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
   }else if(model == "logit"){
     J   <- logit_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+  }else if(model == "poisson"){
+    J   <- poisson_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
   }else if(model == "felm"){
     # we can use the same function as "lm"
     J   <- lm_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
