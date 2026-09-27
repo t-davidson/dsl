@@ -20,7 +20,7 @@
 #' @importFrom estimatr lm_robust
 #' @importFrom matrixcalc is.positive.definite
 #' @importFrom arm model.matrixBayes
-#' @importFrom stats as.formula glm lm median model.frame model.matrix model.response optim predict sd pnorm qnorm terms var
+#' @importFrom stats as.formula glm lm median model.frame model.matrix model.response optim predict sd pnorm qnorm relevel terms var
 #' @importFrom utils capture.output
 #' @importFrom graphics points
 #' @import tidyverse

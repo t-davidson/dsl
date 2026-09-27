@@ -97,7 +97,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
     fe_Y <- fe_X <- NULL
 
     # Fixed effects of the index with more levels are concentrated out (see `fepois_dsl_fe`).
-    # (twoways) Fixed effects of the other index enter as dummy variables (it has fewer levels, so each level has more observations).
+    # (twoways) Fixed effects of the other index are estimated with par (as kappa_t in `fepois_dsl_fe`).
     if(fixed_effect == "twoways"){
       num_level   <- sapply(index, function(x) length(unique(data_orig[, x])))
       index_use   <- index[which.max(num_level)]
@@ -117,20 +117,25 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
       }
     }
 
+    fe_dummy <- NULL
     if(is.null(index_dummy) == FALSE){
+      # The reference level (kappa_t = 1) is the level with the largest DSL-corrected sum of Y
+      Y_dr <- Y_pred + ifelse(labeled_ind == 1, Y_orig - Y_pred, 0) * as.numeric(labeled_ind/sample_prob_use)
       index_dummy_use <- factor(as.character(data_orig[, index_dummy])) # drop unused levels
-      X_dummy <- model.matrix(~ index_dummy_use)[, -1, drop = FALSE]
-      X_orig_use <- cbind(X_orig_use, X_dummy)
-      X_pred_use <- cbind(X_pred_use, X_dummy)
-      rm(X_dummy)
+      Y_dr_sum <- tapply(Y_dr, index_dummy_use, sum)
+      index_dummy_use <- relevel(index_dummy_use, ref = names(Y_dr_sum)[which.max(Y_dr_sum)])
+      fe_dummy <- model.matrix(~ index_dummy_use)[, -1, drop = FALSE]
     }
+    fe_info <- list("index" = fe_index, "dummy" = fe_dummy)
   }else{
     fe_Y <- fe_X <- NULL
   }
 
   inioptim <- rep(0, ncol(X_orig_use))
   if(model != "fepois"){
-    fe_index <- NULL
+    fe_info <- NULL
+  }else if(is.null(fe_info$dummy) == FALSE){
+    inioptim <- c(inioptim, rep(1, ncol(fe_info$dummy))) # (fepois, twoways) kappa starts at 1
   }
 
   if(model %in% c("poisson", "fepois")){
@@ -151,7 +156,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                                Y_pred = Y_pred,
                                X_pred = X_pred_use,
                                model = model,
-                               fe_index = fe_index)
+                               fe_info = fe_info)
   }else{
     est0 <- optim(par = inioptim,
                   fn = dsl_general_moment,
@@ -169,7 +174,11 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                   hessian = FALSE,
                   control = list(maxit = 5000))$par
   }
-  names(est0) <- colnames(X_orig_use)
+  if(model == "fepois"){
+    names(est0) <- c(colnames(X_orig_use), colnames(fe_info$dummy))
+  }else{
+    names(est0) <- colnames(X_orig_use)
+  }
 
   # ###################################################
   # (felm) we compute estimates for other paramters
@@ -223,7 +232,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
     X_orig_use_exp <- X_orig_use
     X_pred_use_exp <- X_pred_use
     if(model == "fepois"){
-      est0 <- est0[1:(length(col_name_keep) - 1)] # (twoways) remove dummy variables of fixed effects
+      est0 <- est0[1:(length(col_name_keep) - 1)] # (twoways) remove fixed effects of the other index
     }
   }
   rm(X_orig_use); rm(X_pred_use)
@@ -244,14 +253,14 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                                                 model  = model,
                                                 clustered = clustered,
                                                 cluster = data_orig$cluster___,
-                                                fe_index = fe_index)
+                                                fe_info = fe_info)
   # Meat   <- dsl_general_Meat(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model,
   #                            clustered, data_orig$cluster___)
 
   Meat <- Meat_decomp$main_1 + Meat_decomp$main_23
 
   # Jacobian
-  J <- dsl_general_Jacobian(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model, fe_index)
+  J <- dsl_general_Jacobian(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model, fe_info)
 
   # Variance
   s_J <- solve(J)
@@ -321,13 +330,13 @@ dsl_general_moment <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
 # Steps are halved until the objective in `dsl_general_moment`, sum(m_n(theta)^2), decreases.
 # The Newton step is always a descent direction of this objective.
 dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model,
-                               fe_index = NULL, tol = 1e-8, maxit = 100){
+                               fe_info = NULL, tol = 1e-8, maxit = 100){
 
   moment_mean <- function(par){
     if(model == "poisson"){
       m_dr <- poisson_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
     }else if(model == "fepois"){
-      m_dr <- fepois_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
+      m_dr <- fepois_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
     }
     return(apply(m_dr, 2, mean)) # m_n(theta) in equation (6)
   }
@@ -336,7 +345,7 @@ dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
   obj <- sum(g^2)
   converged <- FALSE
   for(iter in 1:maxit){
-    J <- dsl_general_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, fe_index)
+    J <- dsl_general_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, fe_info)
     step <- as.numeric(solve(J, g)) # J is -d m_n(theta)/d theta
     if(max(abs(step)) < tol){
       converged <- TRUE
@@ -396,7 +405,7 @@ dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
 #   return(Meat)
 # }
 
-dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, clustered, cluster, fe_index = NULL){
+dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, clustered, cluster, fe_info = NULL){
 
   if(model == "lm"){
     m_orig <- lm_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
@@ -411,8 +420,8 @@ dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_
     m_pred <- poisson_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
 
   }else if(model == "fepois"){
-    m_orig <- fepois_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
-    m_pred <- fepois_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
+    m_orig <- fepois_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+    m_pred <- fepois_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
 
   }else if(model == "felm"){ # we can use the same function as "lm"
     m_orig <- lm_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
@@ -482,7 +491,7 @@ dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_
   return(out)
 }
 
-dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, fe_index = NULL){
+dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, fe_info = NULL){
 
   if(model == "lm"){
     J   <- lm_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
@@ -491,7 +500,7 @@ dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_or
   }else if(model == "poisson"){
     J   <- poisson_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
   }else if(model == "fepois"){
-    J   <- fepois_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
+    J   <- fepois_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
   }else if(model == "felm"){
     # we can use the same function as "lm"
     J   <- lm_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
