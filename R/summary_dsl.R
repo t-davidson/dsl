@@ -38,10 +38,10 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   cat("DSL Specification:\n")
   cat("==================\n")
 
-  if(object$internal$model != "felm"){
+  if((object$internal$model %in% c("felm", "fepois")) == FALSE){
     cat(paste0("Model:  ", object$internal$model))
     cat("\n")
-  }else if(object$internal$model == "felm"){
+  }else if(object$internal$model %in% c("felm", "fepois")){
     cat(paste0("Model:  ", object$internal$model, " (", object$internal$fixed_effect, ")"))
     cat("\n")
   }
@@ -49,7 +49,7 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   cat(paste0("Call:  ", paste(ch_for[2], ch_for[1], ch_for[3])))
   cat("\n")
 
-  if(object$internal$model == "felm"){
+  if(object$internal$model %in% c("felm", "fepois")){
     if(object$internal$fixed_effect == "twoways"){
       cat(paste0("Fixed Effects:  ", object$internal$index[1], " and ", object$internal$index[2]))
       cat("\n\n")

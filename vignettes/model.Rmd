@@ -17,11 +17,13 @@ output:
 
 - [**`felm`: Fixed Effects Linear Regression**](#felm) <br>
 
+- [**`fepois`: Fixed Effects Poisson Regression**](#fepois) <br>
+
 
 </div>
 </div>
 
-Note: We currently cover four models (`lm`, `logit`, `poisson`, `felm`). In the next update, we are planning to add more models, including multinomial-logit regression and two-stage least squares for the instrumental variable method. 
+Note: We currently cover five models (`lm`, `logit`, `poisson`, `felm`, `fepois`). In the next update, we are planning to add more models, including multinomial-logit regression and two-stage least squares for the instrumental variable method. 
 
 <br>
 
@@ -49,7 +51,7 @@ out_lm <- dsl(model = "lm",
 
 | Argument | Description              |
 |:-------- | :------------------------|
-|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), `poisson` (Poisson regression), and `felm` (fixed-effects regression).|
+|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), `poisson` (Poisson regression), `felm` (fixed-effects regression), and `fepois` (fixed-effects Poisson regression).|
 |`formula` | A formula used in the specified regression model.|
 |`predicted_var` | A vector of column names in the data that correspond to variables that need to be predicted.|
 |`prediction` | A vector of column names in the data that correspond to predictions of `predicted_var`. |
@@ -168,3 +170,34 @@ out_felm_two <- dsl(model = "felm",
 ```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
 summary(out_felm_two)
 ```
+
+<br>
+
+### **`fepois`: Fixed Effects Poisson Regression**{#fepois} 
+<p class="lh-lg">
+</p>
+
+Researchers can implement DSL fixed effects Poisson regression for count outcomes by specifying `model = "fepois"`. It uses the same arguments as `model = "felm"` (`fixed_effect`, `index`, and `cluster`). 
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+data("data_fepois") # example data 
+head(data_fepois)
+```
+
+In this example, variable `Y` is a count that requires text annotation (it takes `NA` if a given observation is not labeled by experts), and variable `pred_Y` represents predicted counts for `Y`. The data is a panel of 100 units over 20 years (`unit` and `year`). 
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+out_fepois <- dsl(model = "fepois", 
+                  formula = Y ~ X1 + X2,
+                  predicted_var = "Y",
+                  prediction = "pred_Y",
+                  fixed_effect = "twoways", 
+                  index = c("unit", "year"), 
+                  cluster = "unit",
+                  data = data_fepois)
+summary(out_fepois)
+```
+
+As in `model = "poisson"`, coefficients are on the log scale and the estimator is Poisson Pseudo Maximum Likelihood (PPML), which allows overdispersed and non-integer outcomes. `fixed_effect = "oneway"` with one element in `index` implements one-way fixed effects.
+
+We recommend `model = "fepois"` over adding fixed effects as dummy variables (e.g., `factor(unit)`) to `model = "poisson"`. The DSL estimator of the fixed effect of each group relies on the DSL-corrected sum of the outcome within the group. When a group is small, one labeled observation with a large prediction error can make this sum negative, and the fixed effect (the log of a negative number) is not defined. `model = "fepois"` estimates the fixed effects on the exponentiated scale, where they are defined even in such cases, and concentrates out the fixed effects of the index with more levels (with `fixed_effect = "twoways"`, the fixed effects of the other index are estimated together with the coefficients). When all fixed effects are defined, it gives the same estimates and standard errors as the dummy-variable approach. 
