@@ -39,6 +39,7 @@ reference:
   - data_logit
   - data_poisson
   - data_felm
+  - data_fepois
   - data_unequal
   - data_post
   - data_cand

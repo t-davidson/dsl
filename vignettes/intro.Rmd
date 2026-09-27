@@ -72,7 +72,7 @@ out <- dsl(model = "logit",
 
 | Argument | Description              |
 |:-------- | :------------------------|
-|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), `poisson` (Poisson regression), and `felm` (fixed-effects regression).|
+|`model` | A regression model. `dsl` currently supports `lm` (linear regression), `logit` (logistic regression), `poisson` (Poisson regression), `felm` (fixed-effects regression), and `fepois` (fixed-effects Poisson regression).|
 |`formula` | A formula used in the specified regression model.|
 |`predicted_var` | A vector of column names in the data that correspond to variables that need to be predicted.|
 |`prediction` | A vector of column names in the data that correspond to predictions of `predicted_var`. |
@@ -88,7 +88,7 @@ It first outputs the specification of the DSL estimation, including the number o
 
 As for coefficients, researchers can interpret estimates and standard errors as in the usual regression analyses. The package implements the hetroskedasticity-robust standard errors by default. When users want to compute cluster-robust standard errors, they can use argument `cluster`, which we explain more [here](http://naokiegami.com/dsl/articles/faq.html). 
 
-The package supports different types of regression models: linear regression (`lm`), logistic regression (`logit`), Poisson regression for count outcomes (`poisson`), and linear fixed-effects regression (`felm`). To learn more about each model, please visit **[Models Available in DSL](http://naokiegami.com/dsl/articles/model.html)**.
+The package supports different types of regression models: linear regression (`lm`), logistic regression (`logit`), Poisson regression for count outcomes (`poisson`), linear fixed-effects regression (`felm`), and fixed-effects Poisson regression (`fepois`). To learn more about each model, please visit **[Models Available in DSL](http://naokiegami.com/dsl/articles/model.html)**.
 
 To help users apply DSL in various practical settings, we answer frequently asked questions at **[Frequently Asked Questions](http://naokiegami.com/dsl/articles/faq.html)**, including how to determine the required number of expert annotations, how to incorporate more complex sampling strategies for expert annotations, and how to handle cluster standard errors. 
 

@@ -1,5 +1,5 @@
 #' Estimating Regression using the DSL framework
-#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), and \code{felm} (fixed-effects regression).
+#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), and \code{fepois} (fixed-effects Poisson regression).
 #' @param formula A formula used in the specified regression model.
 #' @param predicted_var A vector of column names in the data that correspond to variables that need to be predicted.
 #' @param prediction A vector of column names in the data that correspond to predictions of \code{predicted_var}.
@@ -7,8 +7,8 @@
 #' @param cluster A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}.
 #' @param labeled (Optional) A column name in the data that indicates which observation is labeled. It should be a vector of 1 (labeled) and 0 (non-labeled). When \code{NULL}, the function assumes that observations that have \code{NA} in \code{predicted_var} are non-labeled and other observations are labeled.
 #' @param sample_prob (Optional) A column name in the data that correspond to the sampling probability for labeling a particular observation. When \code{NULL}, the function assumes random sampling with equal probabilities.
-#' @param fixed_effect (Used when \code{model = "felm"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).
-#' @param index (Used when \code{model = "felm"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.
+#' @param fixed_effect (Used when \code{model = "felm"} or \code{model = "fepois"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).
+#' @param index (Used when \code{model = "felm"} or \code{model = "fepois"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.
 #' @param sl_method A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).
 #' @param feature A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}).
 #' @param family (Used when making predictions) A variable type of \code{predicted_var}. Default is \code{gaussian}.
@@ -20,7 +20,7 @@
 #' @importFrom estimatr lm_robust
 #' @importFrom matrixcalc is.positive.definite
 #' @importFrom arm model.matrixBayes
-#' @importFrom stats as.formula glm lm median model.frame model.matrix model.response optim predict sd pnorm qnorm var
+#' @importFrom stats as.formula glm lm median model.frame model.matrix model.response optim predict sd pnorm qnorm terms var
 #' @importFrom utils capture.output
 #' @importFrom graphics points
 #' @import tidyverse
@@ -61,8 +61,8 @@ dsl <- function(model = "lm",
   # data.frame
   class(data) <- "data.frame"
 
-  if((model %in% c("lm", "logit", "poisson", "felm")) == FALSE){
-    stop(" `model` should be either `lm`, `logit`, `poisson`, or `felm` ")
+  if((model %in% c("lm", "logit", "poisson", "felm", "fepois")) == FALSE){
+    stop(" `model` should be either `lm`, `logit`, `poisson`, `felm`, or `fepois` ")
   }
 
   if(is.null(prediction) & is.null(feature)){
@@ -70,9 +70,9 @@ dsl <- function(model = "lm",
   }
 
   # Model-Specific Check
-  if(model == "felm"){
+  if(model %in% c("felm", "fepois")){
     if(is.null(index) == TRUE){
-      stop("Please specify `index` for `model = felm` ")
+      stop(paste0("Please specify `index` for `model = ", model, "` "))
     }
     if(fixed_effect == "twoways"){
       if(length(index) != 2){
@@ -80,6 +80,14 @@ dsl <- function(model = "lm",
       }
     }else if(fixed_effect == "oneway"){
       index_use <- index[1]
+    }
+  }
+  if(model == "fepois"){
+    if((fixed_effect %in% c("oneway", "twoways")) == FALSE){
+      stop(" `fixed_effect` should be either `oneway` or `twoways` ")
+    }
+    if(attr(terms(formula), "intercept") == 0){
+      stop(" `formula` should include an intercept for `model = fepois` (the intercept is absorbed by fixed effects). ")
     }
   }
 
@@ -134,6 +142,9 @@ dsl <- function(model = "lm",
     stop("NA in `predicted_var` of labeled data")
   }
   keep_var <- setdiff(unique(c("cluster___", sample_prob, labeled, covariates_use, all.vars(formula))), predicted_var)
+  if(model == "fepois"){
+    keep_var <- unique(c(keep_var, index))
+  }
   remove <- apply(data[, keep_var, drop = FALSE], 1, function(x) any(is.na(x)))
   data <- data[remove == FALSE, , drop = FALSE]
 
@@ -152,10 +163,10 @@ dsl <- function(model = "lm",
   if(all(data[, sample_prob] > 0 & data[, sample_prob] <= 1) == FALSE){
     stop(" `sample_prob` in `data` should be greater than 0 and equal to or smaller than 1. Please check the data. ")
   }
-  if(model == "poisson"){
+  if(model %in% c("poisson", "fepois")){
     mf_check <- model.frame(formula, data = data, na.action = "na.pass")
     if(any(model.response(mf_check) < 0, na.rm = TRUE)){
-      stop(" The outcome should be non-negative for `model = poisson`. Please check the data. ")
+      stop(paste0(" The outcome should be non-negative for `model = ", model, "`. Please check the data. "))
     }
     rm(mf_check)
   }
@@ -181,6 +192,15 @@ dsl <- function(model = "lm",
       ncol_X_exp <- ncol_X + length(unique(data[, index_use]))
     }else if(fixed_effect == "twoways"){
       ncol_X_exp <- ncol_X + length(unique(data[, index[1]])) + length(unique(data[, index[2]])) - 1
+    }
+  }else if(model == "fepois"){
+    ncol_X <- ncol_X - 1   # Remove Intercept
+
+    ## (twoways) including dummy variables for the index with fewer levels
+    if(fixed_effect == "twoways"){
+      ncol_X_exp <- ncol_X + min(length(unique(data[, index[1]])), length(unique(data[, index[2]]))) - 1
+    }else{
+      ncol_X_exp <- ncol_X
     }
   }else{
     ncol_X_exp <- ncol_X

@@ -90,20 +90,59 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
       fe_Y <- fixed_effect_use_1$adj_Y_avg_exp + fixed_effect_use_2$adj_Y_avg_exp - mean(adj_Y, na.rm = TRUE)
       fe_X <- t(t(fixed_effect_use_1$adj_X_avg_exp + fixed_effect_use_2$adj_X_avg_exp) - apply(adj_X, 2, mean, na.rm = TRUE))
     }
+  }else if(model == "fepois"){
+    # For Fixed Effects, we remove intercept
+    X_orig_use <- X_orig_use[, -1, drop = FALSE]
+    X_pred_use <- X_pred_use[, -1, drop = FALSE]
+    fe_Y <- fe_X <- NULL
+
+    # Fixed effects of the index with more levels are concentrated out (see `fepois_dsl_fe`).
+    # (twoways) Fixed effects of the other index enter as dummy variables (it has fewer levels, so each level has more observations).
+    if(fixed_effect == "twoways"){
+      num_level   <- sapply(index, function(x) length(unique(data_orig[, x])))
+      index_use   <- index[which.max(num_level)]
+      index_dummy <- setdiff(index, index_use)
+    }else{
+      index_use   <- index[1]
+      index_dummy <- NULL
+    }
+    fe_index <- match(data_orig[, index_use], unique(data_orig[, index_use])) # 1, ..., G (no unused levels)
+
+    # Covariates should vary within fixed effects
+    for(index_check in c(index_use, index_dummy)){
+      no_var <- apply(X_pred_use, 2, function(x) all(tapply(x, data_orig[, index_check], function(z) max(z) - min(z)) == 0))
+      if(any(no_var)){
+        stop(paste0(" `", paste(colnames(X_pred_use)[no_var], collapse = "`, `"), "` does not vary within `", index_check,
+                    "` and cannot be estimated with fixed effects of `", index_check, "`. "))
+      }
+    }
+
+    if(is.null(index_dummy) == FALSE){
+      index_dummy_use <- factor(as.character(data_orig[, index_dummy])) # drop unused levels
+      X_dummy <- model.matrix(~ index_dummy_use)[, -1, drop = FALSE]
+      X_orig_use <- cbind(X_orig_use, X_dummy)
+      X_pred_use <- cbind(X_pred_use, X_dummy)
+      rm(X_dummy)
+    }
   }else{
     fe_Y <- fe_X <- NULL
   }
 
   inioptim <- rep(0, ncol(X_orig_use))
+  if(model != "fepois"){
+    fe_index <- NULL
+  }
 
-  if(model == "poisson"){
-    # (poisson) Start the intercept at log of the DSL estimate of E(Y), which solves the moment conditions when all slopes are zero
-    Y_dr <- Y_pred + ifelse(labeled_ind == 1, Y_orig - Y_pred, 0) * as.numeric(labeled_ind/sample_prob_use)
-    if(with_intercept == TRUE & mean(Y_dr) > 0){
-      inioptim[1] <- log(mean(Y_dr))
+  if(model %in% c("poisson", "fepois")){
+    if(model == "poisson"){
+      # (poisson) Start the intercept at log of the DSL estimate of E(Y), which solves the moment conditions when all slopes are zero
+      Y_dr <- Y_pred + ifelse(labeled_ind == 1, Y_orig - Y_pred, 0) * as.numeric(labeled_ind/sample_prob_use)
+      if(with_intercept == TRUE & mean(Y_dr) > 0){
+        inioptim[1] <- log(mean(Y_dr))
+      }
     }
 
-    # (poisson) exp() makes `optim` unstable (overflow). We solve the same moment conditions with Newton-Raphson
+    # (poisson, fepois) exp() makes `optim` unstable (overflow). We solve the same moment conditions with Newton-Raphson
     est0 <- dsl_general_newton(par = inioptim,
                                labeled_ind = labeled_ind,
                                sample_prob_use = sample_prob_use,
@@ -111,7 +150,8 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                                X_orig = X_orig_use,
                                Y_pred = Y_pred,
                                X_pred = X_pred_use,
-                               model = model)
+                               model = model,
+                               fe_index = fe_index)
   }else{
     est0 <- optim(par = inioptim,
                   fn = dsl_general_moment,
@@ -182,6 +222,9 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
     est0_exp <- est0
     X_orig_use_exp <- X_orig_use
     X_pred_use_exp <- X_pred_use
+    if(model == "fepois"){
+      est0 <- est0[1:(length(col_name_keep) - 1)] # (twoways) remove dummy variables of fixed effects
+    }
   }
   rm(X_orig_use); rm(X_pred_use)
 
@@ -200,14 +243,15 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                                                 X_pred = X_pred_use_exp,
                                                 model  = model,
                                                 clustered = clustered,
-                                                cluster = data_orig$cluster___)
+                                                cluster = data_orig$cluster___,
+                                                fe_index = fe_index)
   # Meat   <- dsl_general_Meat(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model,
   #                            clustered, data_orig$cluster___)
 
   Meat <- Meat_decomp$main_1 + Meat_decomp$main_23
 
   # Jacobian
-  J <- dsl_general_Jacobian(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model)
+  J <- dsl_general_Jacobian(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model, fe_index)
 
   # Variance
   s_J <- solve(J)
@@ -217,7 +261,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   V0 <- (s_J_use %*% Meat %*% t(s_J_use))/n
 
   # Variance of the target paramter
-  if(model == "felm"){ # with intercept
+  if(model %in% c("felm", "fepois")){ # with intercept
     # Rescale-back the coefficients and V
     D_2 <- cbind(diag(1/sd_X, ncol = length(sd_X), nrow = length(sd_X))) # we don't need intercept
     D   <- rbind(D_2)
@@ -237,7 +281,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   est <- as.numeric(D %*% est0)
   V   <- D %*% V0 %*% t(D)
 
-  if(model == "felm"){
+  if(model %in% c("felm", "fepois")){
     col_name_keep <- col_name_keep[-1]
   }
 
@@ -277,11 +321,13 @@ dsl_general_moment <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
 # Steps are halved until the objective in `dsl_general_moment`, sum(m_n(theta)^2), decreases.
 # The Newton step is always a descent direction of this objective.
 dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model,
-                               tol = 1e-8, maxit = 100){
+                               fe_index = NULL, tol = 1e-8, maxit = 100){
 
   moment_mean <- function(par){
     if(model == "poisson"){
       m_dr <- poisson_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+    }else if(model == "fepois"){
+      m_dr <- fepois_dsl_moment_base(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
     }
     return(apply(m_dr, 2, mean)) # m_n(theta) in equation (6)
   }
@@ -290,7 +336,7 @@ dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
   obj <- sum(g^2)
   converged <- FALSE
   for(iter in 1:maxit){
-    J <- dsl_general_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
+    J <- dsl_general_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, fe_index)
     step <- as.numeric(solve(J, g)) # J is -d m_n(theta)/d theta
     if(max(abs(step)) < tol){
       converged <- TRUE
@@ -350,7 +396,7 @@ dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
 #   return(Meat)
 # }
 
-dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, clustered, cluster){
+dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, clustered, cluster, fe_index = NULL){
 
   if(model == "lm"){
     m_orig <- lm_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
@@ -363,6 +409,10 @@ dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_
   }else if(model == "poisson"){
     m_orig <- poisson_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
     m_pred <- poisson_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+
+  }else if(model == "fepois"){
+    m_orig <- fepois_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
+    m_pred <- fepois_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
 
   }else if(model == "felm"){ # we can use the same function as "lm"
     m_orig <- lm_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
@@ -432,7 +482,7 @@ dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_
   return(out)
 }
 
-dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model){
+dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, fe_index = NULL){
 
   if(model == "lm"){
     J   <- lm_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
@@ -440,6 +490,8 @@ dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_or
     J   <- logit_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
   }else if(model == "poisson"){
     J   <- poisson_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
+  }else if(model == "fepois"){
+    J   <- fepois_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_index)
   }else if(model == "felm"){
     # we can use the same function as "lm"
     J   <- lm_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)
