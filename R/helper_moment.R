@@ -226,15 +226,12 @@ fepois_dsl_fe <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_p
     d_orig <- cbind(X_orig * exp_orig, fe_info$dummy * exp_orig_X)
   }
 
-  # (fenegbin) weights theta/(theta + mu_pilot). mu_pilot uses the fixed effect estimated only with predictions (Y_pred), so that
-  # the weights do not depend on the labeled outcomes of the group (see fenegbin)
+  # (fenegbin) weights theta/(theta + mu_pilot). mu_pilot is fixed during estimation (see fenegbin)
   if(is.null(theta) == TRUE){
     weight_pred <- weight_orig <- 1
   }else{
-    exp_fe_pilot <- as.numeric(rowsum(Y_pred, fe_info$index))/as.numeric(rowsum(exp_pred, fe_info$index))
-    exp_fe_pilot[is.finite(exp_fe_pilot) == FALSE] <- 0
-    weight_pred <- theta/(theta + pmax(exp_fe_pilot[fe_info$index] * exp_pred, 0))
-    weight_orig <- theta/(theta + pmax(exp_fe_pilot[fe_info$index] * exp_orig, 0))
+    weight_pred <- theta/(theta + fe_info$mu_pilot_pred)
+    weight_orig <- theta/(theta + fe_info$mu_pilot_orig)
   }
 
   Y_dr <- Y_pred * weight_pred + (Y_orig * weight_orig - Y_pred * weight_pred) * r_pi
@@ -385,10 +382,11 @@ negbin_dsl_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_ori
 # the moment for log(theta) is the maximum likelihood score (see negbin) with mu = exp_fe_g * kappa_t * exp(X par_X).
 # Maximum likelihood uses the weights theta/(theta + mu) with the estimated fixed effect exp_fe_g. With DSL, exp_fe_g depends heavily on
 # the few labeled observations of the group (weighted by 1/pi), and weights that depend on them bias the coefficients
-# (incidental parameter problem). Thus, mu_pilot uses the fixed effect estimated only with predictions (sum_g Y_pred / sum_g kappa_t * exp(X par_X)).
+# (incidental parameter problem). Thus, mu_pilot = exp_fe_pilot_g * kappa_t * exp(X par_X) uses (par_X, kappa) from the fepois estimates and
+# the fixed effect estimated only with predictions (exp_fe_pilot_g = sum_g Y_pred / sum_g kappa_t * exp(X par_X)), and it is fixed during estimation.
 # The moments for (par_X, kappa) are then linear in Y, as in fepois, and remain valid for any weights.
 # As in negbin, the score for log(theta) uses only labeled observations weighted by 1/pi.
-# Derivatives of the weights and cross-derivatives between the mean and theta multiply (Y - mu) and have mean zero, so the Jacobian omits them.
+# Cross-derivatives between the mean parameters and theta multiply (Y - mu) and have mean zero, so the Jacobian omits them.
 fenegbin_dsl_moment_orig <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info){
   theta <- exp(par[length(par)])
   par_fe <- par[-length(par)]

@@ -167,6 +167,12 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
       }else{
         fe_pois <- fepois_dsl_fe(est0, labeled_ind, sample_prob_use, Y_orig, X_orig_use, Y_pred, X_pred_use, fe_info)
         mu_orig <- pmax(fe_pois$exp_fe * fe_pois$exp_orig, 0)
+
+        # (fenegbin) mu_pilot for the weights: fepois estimates of (par_X, kappa) and fixed effects estimated only with predictions
+        exp_fe_pilot <- as.numeric(rowsum(Y_pred, fe_info$index))/as.numeric(rowsum(fe_pois$exp_pred, fe_info$index))
+        exp_fe_pilot[is.finite(exp_fe_pilot) == FALSE] <- 0
+        fe_info$mu_pilot_pred <- pmax(exp_fe_pilot[fe_info$index] * fe_pois$exp_pred, 0)
+        fe_info$mu_pilot_orig <- pmax(exp_fe_pilot[fe_info$index] * fe_pois$exp_orig, 0)
         rm(fe_pois)
       }
       r_pi <- as.numeric(labeled_ind/sample_prob_use)
