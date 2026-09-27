@@ -225,6 +225,8 @@ summary(out_negbin)
 
 The negative binomial model assumes `Var(Y | X) = mu + mu^2/theta`, where `theta` is the dispersion parameter (reported at the bottom of `summary()` and stored in `out_negbin$theta`). Coefficients are on the log scale, as in `model = "poisson"`. They are estimated by maximum likelihood, and `theta` is estimated by maximum likelihood using the labeled observations (predictions carry no information about the dispersion of the outcome). Because standard errors are robust (sandwich), the coefficients and their standard errors remain valid when the expected count is correctly specified, even if the outcome does not follow the negative binomial distribution. 
 
+`model = "poisson"` and `model = "negbin"` estimate the same coefficients when the expected count is correctly specified, and both are valid for overdispersed outcomes. In our simulations with 10-20% of documents labeled, `negbin` was not more precise than `poisson`: the precision of DSL depends mostly on the labeled documents, and the negative binomial weights did not reduce this part. `model = "poisson"` is a good default, and `model = "negbin"` is useful when the negative binomial model itself is of interest (e.g., `theta`).
+
 
 <br>
 
@@ -247,4 +249,6 @@ summary(out_fenegbin)
 ```
 
 Fixed effects are handled as in `model = "fepois"`. The coefficients solve the moments of `fepois` weighted by the negative binomial weights `theta/(theta + mu)`, and `theta` is estimated by maximum likelihood using the labeled observations. In maximum likelihood (e.g., `fixest::fenegbin`), `mu` in the weights uses the estimated fixed effects. With DSL, the fixed effect of a group depends heavily on its few labeled observations (weighted by the inverse of the sampling probability), and weights that depend on them bias the coefficients (the incidental parameter problem). Thus, `fenegbin` computes `mu` in the weights with fixed effects estimated only from predictions. The moments are then valid for any weights, as in `model = "fepois"`, and the weights only affect efficiency.
+
+When each fixed effect has enough labeled documents, `fenegbin` can be substantially more precise than `fepois`. In our simulations with overdispersed outcomes, its standard errors were 20-30% smaller than those of `fepois` with one-way fixed effects (50 groups of 40 documents, 20% labeled) and with two-way fixed effects (100 units over 20 years, 20% labeled). As `theta` is estimated with the labeled documents, it is imprecise when there are few labeled documents per fixed effect (e.g., two-way fixed effects with 4-5 labeled documents per level). Then, `fenegbin` can be less precise than `fepois`, or it may fail to estimate `theta` and stop with an error recommending `fepois`, which is valid in all these cases.
 

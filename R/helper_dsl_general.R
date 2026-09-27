@@ -396,6 +396,9 @@ dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
 
   g   <- moment_mean(par)
   obj <- sum(g^2)
+  if(is.finite(obj) == FALSE){
+    stop(" The moment conditions are not defined at the starting values. ")
+  }
   converged <- FALSE
   for(iter in 1:maxit){
     J <- dsl_general_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, fe_info, theta)
@@ -449,22 +452,29 @@ dsl_fenegbin_solve <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
     return(mean(m_dr[, ncol(m_dr)]))
   }
 
+  message_fail <- paste0(" `fenegbin` could not be estimated: the dispersion parameter theta is not identified. This happens when there are ",
+                         "too few labeled observations per fixed effect. Please use `model = fepois`, which is valid for overdispersed outcomes. ")
+
   par_mean  <- par[-length(par)]
   log_theta <- par[length(par)]
   converged <- FALSE
   for(iter in 1:maxit){
-    par_mean_new <- dsl_general_newton(par = par_mean, labeled_ind = labeled_ind, sample_prob_use = sample_prob_use,
-                                       Y_orig = Y_orig, X_orig = X_orig, Y_pred = Y_pred, X_pred = X_pred,
-                                       model = "fepois", fe_info = fe_info, theta = exp(log_theta))
+    par_mean_new <- tryCatch(dsl_general_newton(par = par_mean, labeled_ind = labeled_ind, sample_prob_use = sample_prob_use,
+                                                Y_orig = Y_orig, X_orig = X_orig, Y_pred = Y_pred, X_pred = X_pred,
+                                                model = "fepois", fe_info = fe_info, theta = exp(log_theta)),
+                             error = function(e) stop(message_fail))
 
     # log(theta) in (log(1e-4), log(1e6))
     range_theta <- log(c(1e-4, 1e6))
     moment_range <- sapply(range_theta, moment_theta, par_mean = par_mean_new)
+    if(any(is.finite(moment_range) == FALSE)){
+      stop(message_fail)
+    }
     if(moment_range[2] > 0){
       stop(" The dispersion parameter theta diverges to infinity: the outcome does not appear to be overdispersed, and the negative binomial model reduces to the Poisson model. Please use `model = fepois`. ")
     }
     if(moment_range[1] < 0){
-      stop(" The dispersion parameter theta is not identified (it goes to zero). Please use `model = fepois`. ")
+      stop(message_fail)
     }
     log_theta_new <- uniroot(moment_theta, interval = range_theta, par_mean = par_mean_new,
                              f.lower = moment_range[1], f.upper = moment_range[2], tol = tol)$root
