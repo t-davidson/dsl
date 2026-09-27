@@ -1,5 +1,5 @@
 #' Estimating Regression using the DSL framework
-#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), and \code{felm} (fixed-effects regression).
+#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), and \code{felm} (fixed-effects regression).
 #' @param formula A formula used in the specified regression model.
 #' @param predicted_var A vector of column names in the data that correspond to variables that need to be predicted.
 #' @param prediction A vector of column names in the data that correspond to predictions of \code{predicted_var}.
@@ -61,8 +61,8 @@ dsl <- function(model = "lm",
   # data.frame
   class(data) <- "data.frame"
 
-  if((model %in% c("lm", "logit", "felm")) == FALSE){
-    stop(" `model` should be either `lm`, `logit`, or `felm` ")
+  if((model %in% c("lm", "logit", "poisson", "felm")) == FALSE){
+    stop(" `model` should be either `lm`, `logit`, `poisson`, or `felm` ")
   }
 
   if(is.null(prediction) & is.null(feature)){
@@ -151,6 +151,13 @@ dsl <- function(model = "lm",
   }
   if(all(data[, sample_prob] > 0 & data[, sample_prob] <= 1) == FALSE){
     stop(" `sample_prob` in `data` should be greater than 0 and equal to or smaller than 1. Please check the data. ")
+  }
+  if(model == "poisson"){
+    mf_check <- model.frame(formula, data = data, na.action = "na.pass")
+    if(any(model.response(mf_check) < 0, na.rm = TRUE)){
+      stop(" The outcome should be non-negative for `model = poisson`. Please check the data. ")
+    }
+    rm(mf_check)
   }
 
   # Standardize sample_prob

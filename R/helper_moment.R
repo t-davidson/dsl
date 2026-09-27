@@ -127,3 +127,56 @@ logit_dsl_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
   out <- grad_main
   return(out)
 }
+
+# #######
+# poisson
+# #######
+# Poisson regression with the log link. The moment is the Poisson score X * (Y - exp(X par)).
+# As the variance is estimated with the sandwich formula, this is Poisson Pseudo Maximum Likelihood (PPML):
+# it only requires E(Y | X) = exp(X par), and Y does not need to be an integer or follow a Poisson distribution.
+poisson_dsl_moment_base <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred){
+  mu_orig <- exp(X_orig %*% par)
+  m_orig <- X_orig * as.numeric(Y_orig - mu_orig)
+  m_orig[labeled_ind == 0, ] <- 0  # r/pi * Y
+
+  mu_pred <- exp(X_pred %*% par)
+  m_pred <- X_pred * as.numeric(Y_pred - mu_pred)
+  m_dr   <- m_pred + (m_orig - m_pred) * as.numeric(labeled_ind/sample_prob_use)
+  return(m_dr)
+}
+
+poisson_dsl_moment_orig <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred){
+  mu_orig <- exp(X_orig %*% par)
+  m_orig <- X_orig * as.numeric(Y_orig - mu_orig)
+  m_orig[labeled_ind == 0, ] <- 0  # r/pi * Y
+  return(m_orig)
+}
+
+poisson_dsl_moment_pred <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred){
+  mu_pred <- exp(X_pred %*% par)
+  m_pred <- X_pred * as.numeric(Y_pred - mu_pred)
+  return(m_pred)
+}
+
+poisson_dsl_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred){
+
+  # prediction (d/d par of exp(X par) is exp(X par) * X)
+  mu_pred <- as.numeric(exp(X_pred %*% par))
+  diag_pred2 <- Diagonal(x = mu_pred)
+  diag_pred2_R <- Diagonal(x = mu_pred*labeled_ind/sample_prob_use)
+
+  grad_pred <- (t(X_pred) %*% diag_pred2 %*% X_pred)/nrow(X_pred)
+  grad_pred_R <- (t(X_pred) %*% diag_pred2_R %*% X_pred)/nrow(X_pred)
+
+  # original
+  mu_orig <- as.numeric(exp(X_orig %*% par))
+  mu_orig[labeled_ind == 0] <- 0  # r/pi * Y
+  X_orig[labeled_ind == 0, ] <- 0  # r/pi * Y
+  diag_orig2_R <- Diagonal(x = mu_orig*labeled_ind/sample_prob_use)
+  grad_orig <- (t(X_orig) %*% diag_orig2_R %*% X_orig)/nrow(X_orig)
+
+  grad_main <- grad_pred + grad_orig - grad_pred_R
+
+  out <- grad_main
+  return(out)
+}

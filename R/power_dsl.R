@@ -1,7 +1,7 @@
 #' Power Analysis for DSL Regression
 #' @param labeled_size A vector indicating the number of labeled documents for which the function predicts standard errors.
 #' @param dsl_out An output from function \code{dsl}. When this is supplied, the remaining arguments are overwritten by arguments specified in the output of \code{dsl}. When this is \code{NULL}, the function will use arguments specified below.
-#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), and \code{felm} (fixed-effects regression).
+#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), and \code{felm} (fixed-effects regression).
 #' @param formula A formula used in the specified regression model.
 #' @param predicted_var A vector of column names in the data that correspond to variables that need to be predicted.
 #' @param prediction A vector of column names in the data that correspond to predictions of \code{predicted_var}.
