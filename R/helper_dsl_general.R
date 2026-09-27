@@ -90,7 +90,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
       fe_Y <- fixed_effect_use_1$adj_Y_avg_exp + fixed_effect_use_2$adj_Y_avg_exp - mean(adj_Y, na.rm = TRUE)
       fe_X <- t(t(fixed_effect_use_1$adj_X_avg_exp + fixed_effect_use_2$adj_X_avg_exp) - apply(adj_X, 2, mean, na.rm = TRUE))
     }
-  }else if(model == "fepois"){
+  }else if(model %in% c("fepois", "fenegbin")){
     # For Fixed Effects, we remove intercept
     X_orig_use <- X_orig_use[, -1, drop = FALSE]
     X_pred_use <- X_pred_use[, -1, drop = FALSE]
@@ -132,14 +132,16 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   }
 
   inioptim <- rep(0, ncol(X_orig_use))
-  if(model != "fepois"){
+  if((model %in% c("fepois", "fenegbin")) == FALSE){
     fe_info <- NULL
   }else if(is.null(fe_info$dummy) == FALSE){
-    inioptim <- c(inioptim, rep(1, ncol(fe_info$dummy))) # (fepois, twoways) kappa starts at 1
+    inioptim <- c(inioptim, rep(1, ncol(fe_info$dummy))) # (fepois, fenegbin, twoways) kappa starts at 1
   }
 
-  if(model %in% c("poisson", "fepois")){
-    if(model == "poisson"){
+  if(model %in% c("poisson", "fepois", "negbin", "fenegbin")){
+    # (negbin, fenegbin) We first estimate the Poisson model, which gives the starting values
+    model_pois <- ifelse(model %in% c("poisson", "negbin"), "poisson", "fepois")
+    if(model_pois == "poisson"){
       # (poisson) Start the intercept at log of the DSL estimate of E(Y), which solves the moment conditions when all slopes are zero
       Y_dr <- Y_pred + ifelse(labeled_ind == 1, Y_orig - Y_pred, 0) * as.numeric(labeled_ind/sample_prob_use)
       if(with_intercept == TRUE & mean(Y_dr) > 0){
@@ -155,8 +157,40 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                                X_orig = X_orig_use,
                                Y_pred = Y_pred,
                                X_pred = X_pred_use,
-                               model = model,
+                               model = model_pois,
                                fe_info = fe_info)
+
+    if(model %in% c("negbin", "fenegbin")){
+      if(model == "fenegbin"){
+        fe_pois <- fepois_dsl_fe(est0, labeled_ind, sample_prob_use, Y_orig, X_orig_use, Y_pred, X_pred_use, fe_info)
+        fe_info$exp_fe <- fe_pois$exp_fe[match(seq_len(max(fe_info$index)), fe_info$index)]
+        rm(fe_pois)
+      }
+      # Starting value of theta: method of moments, E[(Y - mu)^2 - mu] = E[mu^2]/theta (DSL versions)
+      blk <- negbin_dsl_block(c(est0, 0), labeled_ind, sample_prob_use, Y_orig, X_orig_use, Y_pred, X_pred_use, fe_info)
+      mu_pred <- pmax(blk$mu_pred, 0)
+      mu_orig <- pmax(blk$mu_orig, 0)
+      r_pi <- blk$r_pi
+      var_excess <- sum((1 - r_pi) * ((Y_pred - mu_pred)^2 - mu_pred) + r_pi * ((blk$Y_orig - mu_orig)^2 - mu_orig))
+      mu_sq <- sum((1 - r_pi) * mu_pred^2 + r_pi * mu_orig^2)
+      theta_ini <- ifelse(var_excess > 0, min(mu_sq/var_excess, 100), 100)
+      rm(blk)
+
+      est_nb <- dsl_negbin_newton(par = c(est0, log(theta_ini)),
+                                  exp_fe = fe_info$exp_fe,
+                                  labeled_ind = labeled_ind,
+                                  sample_prob_use = sample_prob_use,
+                                  Y_orig = Y_orig,
+                                  X_orig = X_orig_use,
+                                  Y_pred = Y_pred,
+                                  X_pred = X_pred_use,
+                                  fe_info = fe_info)
+      est0 <- est_nb$par
+      if(model == "fenegbin"){
+        fe_info$exp_fe <- est_nb$exp_fe
+      }
+      rm(est_nb)
+    }
   }else{
     est0 <- optim(par = inioptim,
                   fn = dsl_general_moment,
@@ -174,11 +208,17 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                   hessian = FALSE,
                   control = list(maxit = 5000))$par
   }
-  if(model == "fepois"){
-    names(est0) <- c(colnames(X_orig_use), colnames(fe_info$dummy))
-  }else{
-    names(est0) <- colnames(X_orig_use)
+  name_par <- colnames(X_orig_use)
+  if(model %in% c("fepois", "fenegbin")){
+    name_par <- c(name_par, colnames(fe_info$dummy))
   }
+  if(model %in% c("negbin", "fenegbin")){
+    name_par <- c(name_par, "log(theta)")
+    theta <- as.numeric(exp(est0[length(est0)]))
+  }else{
+    theta <- NA
+  }
+  names(est0) <- name_par
 
   # ###################################################
   # (felm) we compute estimates for other paramters
@@ -231,8 +271,8 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
     est0_exp <- est0
     X_orig_use_exp <- X_orig_use
     X_pred_use_exp <- X_pred_use
-    if(model == "fepois"){
-      est0 <- est0[1:(length(col_name_keep) - 1)] # (twoways) remove fixed effects of the other index
+    if(model %in% c("fepois", "negbin", "fenegbin")){
+      est0 <- est0[1:ncol(X_orig_use)] # remove (twoways) fixed effects of the other index and (negbin, fenegbin) log(theta)
     }
   }
   rm(X_orig_use); rm(X_pred_use)
@@ -270,7 +310,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   V0 <- (s_J_use %*% Meat %*% t(s_J_use))/n
 
   # Variance of the target paramter
-  if(model %in% c("felm", "fepois")){ # with intercept
+  if(model %in% c("felm", "fepois", "fenegbin")){ # with intercept
     # Rescale-back the coefficients and V
     D_2 <- cbind(diag(1/sd_X, ncol = length(sd_X), nrow = length(sd_X))) # we don't need intercept
     D   <- rbind(D_2)
@@ -290,7 +330,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   est <- as.numeric(D %*% est0)
   V   <- D %*% V0 %*% t(D)
 
-  if(model %in% c("felm", "fepois")){
+  if(model %in% c("felm", "fepois", "fenegbin")){
     col_name_keep <- col_name_keep[-1]
   }
 
@@ -299,7 +339,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   names(se) <- col_name_keep
 
   out <- list("coefficients" = est, "standard_errors" = se, "vcov" = V,
-              "Meat" = Meat, "Meat_decomp" = Meat_decomp, "J" = J, "D" = D, "vcov0" = V0)
+              "Meat" = Meat, "Meat_decomp" = Meat_decomp, "J" = J, "D" = D, "vcov0" = V0, "theta" = theta)
   return(out)
 }
 # ##############
@@ -377,6 +417,77 @@ dsl_general_newton <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig
   return(par)
 }
 
+# ###############################
+# Newton-Raphson (negbin, fenegbin)
+# ###############################
+# Solves the moments for par (M1) and, for fenegbin, the moments for the fixed effects (M2) jointly.
+# As the Jacobian of M2 with respect to the fixed effects (D) is diagonal, the Newton step is obtained by block elimination.
+# Steps are halved until sum(M1^2) + sum(M2^2) decreases.
+dsl_negbin_newton <- function(par, exp_fe = NULL, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info = NULL,
+                              tol = 1e-8, maxit = 200, theta_max = 1e6){
+
+  moment_mean <- function(par, exp_fe){
+    if(is.null(fe_info) == FALSE){
+      fe_info$exp_fe <- exp_fe
+    }
+    blk <- negbin_dsl_block(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+    blk$g1 <- colSums((1 - blk$r_pi) * blk$M1_pred + blk$r_pi * blk$M1_orig)/nrow(X_pred)
+    if(is.null(fe_info) == FALSE){
+      blk$g2 <- as.numeric(rowsum((1 - blk$r_pi) * blk$M2_pred + blk$r_pi * blk$M2_orig, fe_info$index))/nrow(X_pred)
+    }
+    blk$obj <- sum(blk$g1^2) + sum(blk$g2^2)
+    return(blk)
+  }
+
+  blk <- moment_mean(par, exp_fe)
+  converged <- FALSE
+  for(iter in 1:maxit){
+    # Newton step (A, B, C, D are minus the Jacobian)
+    if(is.null(fe_info) == TRUE){
+      step_1 <- as.numeric(solve(blk$A, blk$g1))
+      step_2 <- 0
+      size_2 <- 0
+    }else{
+      S <- blk$A - t(blk$B/blk$D) %*% blk$C
+      step_1 <- as.numeric(solve(S, blk$g1 - t(blk$B) %*% (blk$g2/blk$D)))
+      step_2 <- as.numeric((blk$g2 - blk$C %*% step_1)/blk$D)
+      size_2 <- max(abs(step_2)/pmax(abs(exp_fe), 1e-6 * max(abs(exp_fe))))
+    }
+    if(max(abs(step_1)) < tol & size_2 < tol){
+      converged <- TRUE
+      break
+    }
+
+    # step-halving
+    step_size <- 1
+    improved  <- FALSE
+    while(step_size > 1e-10){
+      par_new    <- par + step_size*step_1
+      exp_fe_new <- exp_fe + step_size*step_2
+      blk_new    <- moment_mean(par_new, exp_fe_new)
+      if(is.finite(blk_new$obj) & blk_new$obj < blk$obj){
+        improved <- TRUE
+        break
+      }
+      step_size <- step_size/2
+    }
+    if(improved == FALSE){
+      break
+    }
+    par <- par_new; exp_fe <- exp_fe_new; blk <- blk_new
+
+    if(exp(par[length(par)]) > theta_max){
+      stop(" The dispersion parameter theta diverges to infinity: the outcome does not appear to be overdispersed, and the negative binomial model reduces to the Poisson model. Please use `model = poisson` (or `fepois`). ")
+    }
+  }
+
+  if(converged == FALSE){
+    warning(" Newton-Raphson did not converge. Estimates may be unreliable. ")
+  }
+  out <- list("par" = par, "exp_fe" = exp_fe)
+  return(out)
+}
+
 # dsl_general_Meat <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, clustered, cluster){
 #
 #   n <- nrow(X_orig)
@@ -422,6 +533,10 @@ dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_
   }else if(model == "fepois"){
     m_orig <- fepois_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
     m_pred <- fepois_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+
+  }else if(model %in% c("negbin", "fenegbin")){
+    m_orig <- negbin_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+    m_pred <- negbin_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
 
   }else if(model == "felm"){ # we can use the same function as "lm"
     m_orig <- lm_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
@@ -501,6 +616,8 @@ dsl_general_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_or
     J   <- poisson_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred)
   }else if(model == "fepois"){
     J   <- fepois_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+  }else if(model %in% c("negbin", "fenegbin")){
+    J   <- negbin_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
   }else if(model == "felm"){
     # we can use the same function as "lm"
     J   <- lm_dsl_Jacobian(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model)

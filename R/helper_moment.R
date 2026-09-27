@@ -281,3 +281,141 @@ fepois_dsl_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_ori
   out <- grad_main
   return(out)
 }
+
+# ###############
+# negbin, fenegbin
+# ###############
+# Negative binomial (NB2) regression: Var(Y | X) = mu + mu^2/theta, with mu = exp(X par_X) (negbin) or
+# mu = exp_fe_g * kappa_t * exp(X par_X) (fenegbin; fixed effects on the linear scale, as in fepois).
+# par = (par_X, kappa, log(theta)). Moments are the maximum likelihood scores:
+#   (1) mean:       Z * (Y - mu) * theta/(theta + mu)  (Poisson score weighted by theta/(theta + mu))
+#   (2) dispersion: d loglik / d log(theta)
+# The score for the mean is valid when E(Y | X) = mu even if Y does not follow the negative binomial distribution.
+# (fenegbin) The fixed effects solve the moment of each group, sum_{i in g} (Y - mu) * theta/(theta + mu) = 0. They have no closed form,
+# so they are estimated jointly with par (see `dsl_negbin_newton`), and the moments for par account for their estimation.
+# When exp_fe_g <= 0 (a group whose DSL-corrected sum of Y is negative; see fepois), mu <= 0 and we use Poisson weights (theta/(theta + 0) = 1).
+
+# Scores for one observation given Y, mu, and theta (and their derivatives)
+negbin_dsl_parts <- function(Y, mu, theta){
+  mu_pos <- pmax(mu, 0)
+  Y_pos  <- pmax(Y, 0)  # digamma(Y + theta) requires Y + theta > 0 (only matters when predictions are negative)
+
+  resid_w <- (Y - mu) * theta/(theta + mu_pos)                              # moment for the mean
+  a <- ifelse(mu > 0, theta * (theta + Y)/(theta + mu_pos)^2, 1)             # - d resid_w / d mu
+  resid_w_phi <- (Y - mu) * theta * mu_pos/(theta + mu_pos)^2                # d resid_w / d log(theta)
+
+  s_theta <- digamma(Y_pos + theta) - digamma(theta) + log(theta/(theta + mu_pos)) + (mu_pos - Y_pos)/(theta + mu_pos)
+  s_theta_theta <- trigamma(Y_pos + theta) - trigamma(theta) + 1/theta - 1/(theta + mu_pos) - (mu_pos - Y_pos)/(theta + mu_pos)^2
+  s_phi <- theta * s_theta                                                   # moment for log(theta)
+  s_phi_mu <- theta * (Y_pos - mu_pos)/(theta + mu_pos)^2 * as.numeric(mu > 0)  # d s_phi / d mu
+  s_phi_phi <- theta * s_theta + theta^2 * s_theta_theta                     # d s_phi / d log(theta)
+
+  out <- list("resid_w" = resid_w, "a" = a, "resid_w_phi" = resid_w_phi,
+              "s_phi" = s_phi, "s_phi_mu" = s_phi_mu, "s_phi_phi" = s_phi_phi)
+  return(out)
+}
+
+# Moments and Jacobian blocks. M1: moments for par. M2: moments for the fixed effects (fenegbin).
+# A = - d M1/d par, B = - d M1/d exp_fe, C = - d M2/d par, D = - d M2/d exp_fe (diagonal). All are averaged over observations.
+negbin_dsl_block <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info = NULL){
+  n <- nrow(X_pred)
+  r_pi <- as.numeric(labeled_ind/sample_prob_use)
+  X_orig[labeled_ind == 0, ] <- 0  # r/pi * Y
+  Y_orig[labeled_ind == 0] <- 0
+
+  theta <- exp(par[length(par)])
+  par_X <- par[1:ncol(X_pred)]
+  exp_pred_X <- as.numeric(exp(X_pred %*% par_X))
+  exp_orig_X <- as.numeric(exp(X_orig %*% par_X))
+
+  if(is.null(fe_info) == TRUE){
+    exp_fe <- kappa <- 1
+    Z_pred <- X_pred
+    Z_orig <- X_orig
+  }else{
+    exp_fe <- fe_info$exp_fe[fe_info$index]
+    if(is.null(fe_info$dummy) == TRUE){
+      kappa  <- 1
+      Z_pred <- X_pred
+      Z_orig <- X_orig
+    }else{
+      kappa  <- as.numeric(1 + fe_info$dummy %*% (par[(ncol(X_pred) + 1):(length(par) - 1)] - 1))
+      Z_pred <- cbind(X_pred, fe_info$dummy)
+      Z_orig <- cbind(X_orig, fe_info$dummy)
+    }
+  }
+  mu_pred <- exp_fe * kappa * exp_pred_X
+  mu_orig <- exp_fe * kappa * exp_orig_X
+
+  # derivatives of mu with respect to (par_X, kappa) and exp_fe
+  if(is.null(fe_info$dummy) == TRUE){
+    dmu_pred <- X_pred * mu_pred
+    dmu_orig <- X_orig * mu_orig
+  }else{
+    dmu_pred <- cbind(X_pred * mu_pred, fe_info$dummy * exp_fe * exp_pred_X)
+    dmu_orig <- cbind(X_orig * mu_orig, fe_info$dummy * exp_fe * exp_orig_X)
+  }
+  dmu_fe_pred <- kappa * exp_pred_X
+  dmu_fe_orig <- kappa * exp_orig_X
+
+  s_pred <- negbin_dsl_parts(Y_pred, mu_pred, theta)
+  s_orig <- negbin_dsl_parts(Y_orig, mu_orig, theta)
+
+  M1_pred <- cbind(Z_pred * s_pred$resid_w, s_pred$s_phi)
+  M1_orig <- cbind(Z_orig * s_orig$resid_w, s_orig$s_phi)
+  M1_orig[labeled_ind == 0, ] <- 0  # r/pi * Y
+  M2_pred <- s_pred$resid_w
+  M2_orig <- s_orig$resid_w
+  M2_orig[labeled_ind == 0] <- 0
+
+  # m_dr = (1 - r/pi) * m_pred + r/pi * m_orig
+  w_pred <- 1 - r_pi
+  w_orig <- r_pi
+  A_1 <- t(Z_pred) %*% (dmu_pred * (s_pred$a * w_pred)) + t(Z_orig) %*% (dmu_orig * (s_orig$a * w_orig))
+  A_2 <- - colSums(Z_pred * (s_pred$resid_w_phi * w_pred)) - colSums(Z_orig * (s_orig$resid_w_phi * w_orig))
+  A_3 <- - colSums(dmu_pred * (s_pred$s_phi_mu * w_pred)) - colSums(dmu_orig * (s_orig$s_phi_mu * w_orig))
+  A_4 <- - sum(s_pred$s_phi_phi * w_pred) - sum(s_orig$s_phi_phi * w_orig)
+  A <- rbind(cbind(A_1, A_2), c(A_3, A_4))/n
+
+  out <- list("M1_pred" = M1_pred, "M1_orig" = M1_orig, "M2_pred" = M2_pred, "M2_orig" = M2_orig, "A" = A, "r_pi" = r_pi,
+              "mu_pred" = mu_pred, "mu_orig" = mu_orig, "Y_orig" = Y_orig)
+
+  if(is.null(fe_info) == FALSE){
+    B_obs <- cbind(Z_pred * (s_pred$a * dmu_fe_pred * w_pred) + Z_orig * (s_orig$a * dmu_fe_orig * w_orig),
+                   - s_pred$s_phi_mu * dmu_fe_pred * w_pred - s_orig$s_phi_mu * dmu_fe_orig * w_orig)
+    C_obs <- cbind(dmu_pred * (s_pred$a * w_pred) + dmu_orig * (s_orig$a * w_orig),
+                   - s_pred$resid_w_phi * w_pred - s_orig$resid_w_phi * w_orig)
+    out$B <- rowsum(B_obs, fe_info$index)/n
+    out$C <- rowsum(C_obs, fe_info$index)/n
+    out$D <- as.numeric(rowsum(s_pred$a * dmu_fe_pred * w_pred + s_orig$a * dmu_fe_orig * w_orig, fe_info$index))/n
+  }
+  return(out)
+}
+
+# Moments for par. (fenegbin) They account for the estimation of the fixed effects: m_1 - (B/D) * m_2 (see fepois).
+negbin_dsl_moment_orig <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info = NULL){
+  blk <- negbin_dsl_block(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+  m_orig <- blk$M1_orig
+  if(is.null(fe_info) == FALSE){
+    m_orig <- m_orig - (blk$B/blk$D)[fe_info$index, , drop = FALSE] * blk$M2_orig
+  }
+  return(m_orig)
+}
+
+negbin_dsl_moment_pred <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info = NULL){
+  blk <- negbin_dsl_block(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+  m_pred <- blk$M1_pred
+  if(is.null(fe_info) == FALSE){
+    m_pred <- m_pred - (blk$B/blk$D)[fe_info$index, , drop = FALSE] * blk$M2_pred
+  }
+  return(m_pred)
+}
+
+negbin_dsl_Jacobian <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info = NULL){
+  blk <- negbin_dsl_block(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, fe_info)
+  J <- blk$A
+  if(is.null(fe_info) == FALSE){
+    J <- J - t(blk$B/blk$D) %*% blk$C # Schur complement (the fixed effects are concentrated out)
+  }
+  return(J)
+}

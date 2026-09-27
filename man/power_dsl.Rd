@@ -30,7 +30,7 @@ power_dsl(
 
 \item{dsl_out}{An output from function \code{dsl}. When this is supplied, the remaining arguments are overwritten by arguments specified in the output of \code{dsl}. When this is \code{NULL}, the function will use arguments specified below.}
 
-\item{model}{A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), and \code{fepois} (fixed-effects Poisson regression).}
+\item{model}{A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), \code{fepois} (fixed-effects Poisson regression), \code{negbin} (negative binomial regression for overdispersed count outcomes), and \code{fenegbin} (fixed-effects negative binomial regression).}
 
 \item{formula}{A formula used in the specified regression model.}
 
@@ -46,9 +46,9 @@ power_dsl(
 
 \item{sample_prob}{(Optional) A column name in the data that correspond to the sampling probability for labeling a particular observation. When \code{NULL}, the function assumes random sampling with equal probabilities.}
 
-\item{index}{(Used when \code{model = "felm"} or \code{model = "fepois"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.}
+\item{index}{(Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.}
 
-\item{fixed_effect}{(Used when \code{model = "felm"} or \code{model = "fepois"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).}
+\item{fixed_effect}{(Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).}
 
 \item{sl_method}{A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).}
 

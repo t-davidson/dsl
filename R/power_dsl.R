@@ -1,7 +1,7 @@
 #' Power Analysis for DSL Regression
 #' @param labeled_size A vector indicating the number of labeled documents for which the function predicts standard errors.
 #' @param dsl_out An output from function \code{dsl}. When this is supplied, the remaining arguments are overwritten by arguments specified in the output of \code{dsl}. When this is \code{NULL}, the function will use arguments specified below.
-#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), and \code{fepois} (fixed-effects Poisson regression).
+#' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), \code{fepois} (fixed-effects Poisson regression), \code{negbin} (negative binomial regression for overdispersed count outcomes), and \code{fenegbin} (fixed-effects negative binomial regression).
 #' @param formula A formula used in the specified regression model.
 #' @param predicted_var A vector of column names in the data that correspond to variables that need to be predicted.
 #' @param prediction A vector of column names in the data that correspond to predictions of \code{predicted_var}.
@@ -9,8 +9,8 @@
 #' @param cluster A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}.
 #' @param labeled (Optional) A column name in the data that indicates which observation is labeled. It should be a vector of 1 (labeled) and 0 (non-labeled). When \code{NULL}, the function assumes that observations that have \code{NA} in \code{predicted_var} are non-labeled and other observations are labeled.
 #' @param sample_prob (Optional) A column name in the data that correspond to the sampling probability for labeling a particular observation. When \code{NULL}, the function assumes random sampling with equal probabilities.
-#' @param fixed_effect (Used when \code{model = "felm"} or \code{model = "fepois"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).
-#' @param index (Used when \code{model = "felm"} or \code{model = "fepois"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.
+#' @param fixed_effect (Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).
+#' @param index (Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.
 #' @param sl_method A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).
 #' @param feature A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}).
 #' @param family (Used when making predictions) A variable type of \code{predicted_var}. Default is \code{gaussian}.
