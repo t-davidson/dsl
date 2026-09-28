@@ -24,7 +24,7 @@ dsl(
 )
 }
 \arguments{
-\item{model}{A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), and \code{felm} (fixed-effects regression).}
+\item{model}{A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), \code{fepois} (fixed-effects Poisson regression), \code{negbin} (negative binomial regression for overdispersed count outcomes), and \code{fenegbin} (fixed-effects negative binomial regression).}
 
 \item{formula}{A formula used in the specified regression model.}
 
@@ -40,9 +40,9 @@ dsl(
 
 \item{sample_prob}{(Optional) A column name in the data that correspond to the sampling probability for labeling a particular observation. When \code{NULL}, the function assumes random sampling with equal probabilities.}
 
-\item{index}{(Used when \code{model = "felm"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.}
+\item{index}{(Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.}
 
-\item{fixed_effect}{(Used when \code{model = "felm"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).}
+\item{fixed_effect}{(Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).}
 
 \item{sl_method}{A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).}
 
@@ -63,6 +63,7 @@ dsl(
    \item \code{standard_errors}: Estimated standard errors.
    \item \code{vcov}: Estimated variance-covariance matrix.
    \item \code{RMSE}: Root mean squared error in the internal prediction step.
+   \item \code{theta}: (\code{model = "negbin"} or \code{"fenegbin"}) Estimated dispersion parameter of the negative binomial distribution, where \code{Var(Y | X) = mu + mu^2/theta}.
    \item \code{internal}: Outputs used only for the internal use.
  }
 }

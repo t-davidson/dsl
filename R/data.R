@@ -27,6 +27,13 @@ NULL
 #' @keywords datasets
 NULL
 
+#' Data for illustrating \code{model = "fepois"}.
+#' @name data_fepois
+#' @docType data
+#' @format data
+#' @keywords datasets
+NULL
+
 #' Data for illustrating \code{model = "felm"}.
 #' @name data_felm
 #' @docType data

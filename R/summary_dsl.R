@@ -38,10 +38,10 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   cat("DSL Specification:\n")
   cat("==================\n")
 
-  if(object$internal$model != "felm"){
+  if((object$internal$model %in% c("felm", "fepois", "fenegbin")) == FALSE){
     cat(paste0("Model:  ", object$internal$model))
     cat("\n")
-  }else if(object$internal$model == "felm"){
+  }else if(object$internal$model %in% c("felm", "fepois", "fenegbin")){
     cat(paste0("Model:  ", object$internal$model, " (", object$internal$fixed_effect, ")"))
     cat("\n")
   }
@@ -49,7 +49,7 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   cat(paste0("Call:  ", paste(ch_for[2], ch_for[1], ch_for[3])))
   cat("\n")
 
-  if(object$internal$model == "felm"){
+  if(object$internal$model %in% c("felm", "fepois", "fenegbin")){
     if(object$internal$fixed_effect == "twoways"){
       cat(paste0("Fixed Effects:  ", object$internal$index[1], " and ", object$internal$index[2]))
       cat("\n\n")
@@ -91,6 +91,9 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   cat("---\n")
   cat("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1")
   cat(paste0("\n", round(ci*100), "% confidence intervals (CI) are reported."))
+  if(object$internal$model %in% c("negbin", "fenegbin")){
+    cat(paste0("\nDispersion parameter: theta = ", round(object$theta, digits = digits), " (Var(Y | X) = mu + mu^2/theta)."))
+  }
   if(is.null(object$internal$cluster) == FALSE){
     cat(paste0("\nStandard errors are clustered by ", object$internal$cluster, "."))
   }
