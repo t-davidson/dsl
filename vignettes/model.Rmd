@@ -23,6 +23,8 @@ output:
 
 - [**`fenegbin`: Fixed Effects Negative Binomial Regression**](#fenegbin) <br>
 
+- [**Choosing among models for count outcomes**](#countchoice) <br>
+
 
 </div>
 </div>
@@ -252,3 +254,30 @@ Fixed effects are handled as in `model = "fepois"`. The coefficients solve the m
 
 When each fixed effect has enough labeled documents, `fenegbin` can be substantially more precise than `fepois`. In our simulations with overdispersed outcomes, its standard errors were 20-30% smaller than those of `fepois` with one-way fixed effects (50 groups of 40 documents, 20% labeled) and with two-way fixed effects (100 units over 20 years, 20% labeled). As `theta` is estimated with the labeled documents, it is imprecise when there are few labeled documents per fixed effect (e.g., two-way fixed effects with 4-5 labeled documents per level). Then, `fenegbin` can be less precise than `fepois`, or it may fail to estimate `theta` and stop with an error recommending `fepois`, which is valid in all these cases.
 
+<br>
+
+### **Choosing among models for count outcomes**{#countchoice} 
+<p class="lh-lg">
+</p>
+
+All count models in `dsl` report robust (sandwich) standard errors, clustered when `cluster` is specified. Overdispersion alone (the variance of the count is larger than its mean) is therefore not a reason to move away from `model = "poisson"`: its estimates and standard errors remain valid however overdispersed the outcome is, as long as the expected count is correctly specified. The usual concern that Poisson standard errors are too small applies to model-based standard errors, which `dsl` does not use.
+
+The negative binomial model is also valid, but it is not necessarily more precise with DSL. In standard regression, the negative binomial model is more precise than the Poisson model under overdispersion because it downweights documents with high expected counts, whose outcomes are noisier. With DSL, much of the uncertainty comes from the prediction errors of the labeled documents (weighted by the inverse of the sampling probability). A good prediction model often counts large documents relatively well, so downweighting them does not reduce this part of the uncertainty.
+
+The table below shows a simulation with a highly overdispersed outcome (`theta = 0.5`, so the variance is about nine times the mean), 100 clusters of 30 documents with cluster-level variation in the expected count, predicted counts with systematic errors, and standard errors clustered by cluster (200 replications). All three models are unbiased for their targets. `model = "lm"` estimates additive effects (the change in the expected count), whereas `poisson` and `negbin` estimate proportional effects (the change in the log expected count). Precision is compared with the average absolute t-statistic, which is comparable across these different targets.
+
+| Labeled | Model | 95% CI coverage (X1 / X2) | Average \|t\| (X1 / X2) |
+|:--------|:------|:-------------------------:|:-------------------------:|
+| 10% | `lm` | 0.885 / 0.905 | 5.0 / 3.4 |
+| 10% | `poisson` | 0.905 / 0.940 | 6.0 / 3.7 |
+| 10% | `negbin` | 0.940 / 0.950 | 5.4 / 3.0 |
+| 20% | `lm` | 0.880 / 0.890 | 6.3 / 4.8 |
+| 20% | `poisson` | 0.925 / 0.905 | 7.9 / 5.3 |
+| 20% | `negbin` | 0.930 / 0.950 | 7.7 / 4.6 |
+
+Based on these results, we recommend:
+
+- **`model = "poisson"` with `cluster`** as the default for count outcomes, including highly overdispersed ones. If clusters may differ in ways that are related to the covariates, use `model = "fepois"` with `index` set to the cluster variable.
+- **`model = "negbin"` (or `fenegbin`) as a robustness check.** Its estimates should agree with those of `poisson` (or `fepois`) when the expected count is correctly specified; a noticeable difference suggests that the model for the expected count is misspecified. `fenegbin` can be more precise than `fepois` when each fixed effect has enough labeled documents (see above).
+- **`model = "lm"` only when additive effects are of interest.** With heavy-tailed counts, a few large documents dominate linear regression, which makes it less precise. Avoid linear regression on `log(Y + 1)`, which does not estimate the effect on the expected count.
+- With heavy-tailed counts and around 100 clusters, confidence intervals of all models can be somewhat too narrow (coverage of 0.88-0.95 in the simulation above). More labeled documents or more clusters help.
