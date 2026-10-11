@@ -13,10 +13,11 @@
 #' @param index (Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.
 #' @param sl_method A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).
 #' @param feature A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}).
-#' @param family (Used when making predictions) A variable type of \code{predicted_var}. Default is \code{gaussian}.
+#' @param family (Used when making predictions with \code{SuperLearner} methods) \code{gaussian} (default) or \code{binomial} (for binary \code{predicted_var}). For count variables, use \code{gaussian}.
 #' @param cross_fit The fold of cross-fitting. Default is \code{5}.
 #' @param sample_split The number of sampling-splitting. Default is \code{10}.
 #' @param seed Numeric \code{seed} used internally. Default is \code{1234}.
+#' @details For \code{fepois} and \code{fenegbin} with predicted independent variables, the variance does not scale exactly with the inverse of the number of labeled documents (pairs of documents enter the estimating equation), so the predicted standard errors are approximate.
 #' @return \code{dsl} returns an object of \code{dsl} class.
 #'  \itemize{
 #'    \item \code{predicted_se}: Predicted standard errors for coefficients. The first row shows the current standard errors for coefficients. The remaining rows show predicted standard errors.

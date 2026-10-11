@@ -94,7 +94,10 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   if(object$internal$model %in% c("negbin", "fenegbin")){
     cat(paste0("\nDispersion parameter: theta = ", round(object$theta, digits = digits), " (Var(Y | X) = mu + mu^2/theta)."))
   }
-  if(is.null(object$internal$cluster) == FALSE){
+  if(is.null(object$internal$cluster_note) == FALSE){
+    cat(paste0("\nStandard errors are clustered by ", object$internal$cluster_note,
+               " (with predicted covariates, ", object$internal$model, " clusters at least by the fixed effects)."))
+  }else if(is.null(object$internal$cluster) == FALSE){
     cat(paste0("\nStandard errors are clustered by ", object$internal$cluster, "."))
   }
 

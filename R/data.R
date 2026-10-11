@@ -34,6 +34,15 @@ NULL
 #' @keywords datasets
 NULL
 
+#' Data for illustrating count models with a predicted categorical independent variable.
+#' @name data_count_x
+#' @docType data
+#' @format A data frame with 3,000 documents from 500 units (6 documents each): \code{Y} (an observed count),
+#' \code{topic} (a categorical variable annotated by experts for 20\% of documents; \code{NA} otherwise),
+#' \code{pred_topic} (the topic predicted by an LLM), \code{X1} (an observed covariate), and \code{unit}.
+#' @keywords datasets
+NULL
+
 #' Data for illustrating \code{model = "felm"}.
 #' @name data_felm
 #' @docType data

@@ -17,21 +17,21 @@ fit_model <- function(outcome, labeled, covariates, data, method, sample_prob = 
     }else if(is.null(sample_prob) == TRUE){
       fit_out <- regression_forest(X = X[R == 1, , drop = FALSE], Y = Y[R == 1], seed = seed)
     }
-  }else if(method == "ranger"){
-    method <- setdiff(method, "grf")
-    sl_method <- paste0("SL.", method)
-    X <- data.frame(X)
-    suppressWarnings({fit_out <- SuperLearner::SuperLearner(Y = Y[R == 1], X = X[R == 1, , drop = FALSE],
-                                                            SL.library = sl_method, family = family,
-                                                            always.split.variables = prediction)})
   }else if(any(method != "grf")){
     method <- setdiff(method, "grf")
     sl_method <- paste0("SL.", method)
     X <- data.frame(X)
+    colnames(X) <- sl_feature_name(colnames(X))
     suppressWarnings({fit_out <- SuperLearner::SuperLearner(Y = Y[R == 1], X = X[R == 1, , drop = FALSE],
                                                             SL.library = sl_method, family = family)})
   }
   return(fit_out)
+}
+
+# Column names of predictors for SuperLearner. Learners such as SL.glm fit `Y ~ .`, so a predictor named `Y`
+# (e.g., the outcome used to predict an independent variable) would be taken as the outcome.
+sl_feature_name <- function(x){
+  return(paste0("feature_", make.names(x)))
 }
 
 # Predict based on fitted g model
@@ -52,6 +52,7 @@ fit_test <- function(fit_out, outcome, labeled, covariates, data, method, family
     Y_hat <- predict(fit_out, newdata = new_data_use)$predictions
   }else if(any(method != "grf")){
     new_data_use <- as.data.frame(X)
+    colnames(new_data_use) <- sl_feature_name(colnames(new_data_use))
     suppressWarnings({Y_hat <- predict(fit_out, newdata = new_data_use, onlySL = TRUE)$pred})
   }
 
