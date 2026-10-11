@@ -34,7 +34,7 @@ dsl(
 
 \item{data}{A data frame. The class should be \code{data.frame}.}
 
-\item{cluster}{A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}. When independent variables are predicted, \code{fepois} and \code{fenegbin} cluster standard errors at least at the level of the fixed effects.}
+\item{cluster}{A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}. (\code{fepois} and \code{fenegbin} with predicted independent variables) When \code{cluster} is specified, standard errors are clustered by the smallest clusters that contain both the groups of the fixed effects and the clusters in \code{cluster} (\code{summary()} reports it when they differ from \code{cluster}).}
 
 \item{labeled}{(Optional) A column name in the data that indicates which observation is labeled. It should be a vector of 1 (labeled) and 0 (non-labeled). When \code{NULL}, the function assumes that observations that have \code{NA} in \code{predicted_var} are non-labeled and other observations are labeled.}
 

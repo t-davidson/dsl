@@ -10,6 +10,8 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   mf_orig <- model.frame(formula, data = data_orig, na.action = "na.pass")
   X_orig <- model.matrix(formula, data = mf_orig)
   Y_orig <- as.numeric(model.response(mf_orig))
+  terms_orig <- terms(mf_orig)
+  xlev_orig <- .getXlevels(terms_orig, mf_orig)
   mf_pred <- model.frame(formula, data = data_pred, na.action = "na.pass")
   X_pred <- model.matrix(formula, data = mf_pred)
   Y_pred <- as.numeric(model.response(mf_pred))
@@ -33,10 +35,14 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   # X_pred is the expected design matrix (used for standardization and starting values).
   X_scen <- NULL
   if(is.null(pred_levels) == FALSE){
-    scen <- count_scenario(formula, data_pred, pred_levels, pred_prob)
+    scen <- count_scenario(formula, data_pred, pred_levels, pred_prob, terms_orig, xlev_orig)
     X_scen <- scen$X
     prob_scen <- scen$prob
     rm(scen)
+    if(identical(colnames(X_scen[[1]]), colnames(X_orig)) == FALSE){
+      stop(paste0(" The design matrix for the predicted variables (", paste(colnames(X_scen[[1]]), collapse = ", "),
+                  ") differs from that of the labeled data (", paste(colnames(X_orig), collapse = ", "), "). "))
+    }
     X_pred <- Reduce("+", lapply(seq_along(X_scen), function(k) X_scen[[k]] * prob_scen[, k]))
     # Columns that do not depend on the predicted covariates (e.g., the intercept) are copied exactly (sum_k prob_k = 1 only up to rounding)
     for(j in seq_len(ncol(X_pred))){
@@ -153,24 +159,13 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
     fe_Y <- fe_X <- NULL
 
     # (pairwise) When a covariate is predicted, we use the pairwise moment (see fepois)
-    rhs_var  <- all.vars(delete.response(terms(formula)))
-    pairwise <- any(predicted_var %in% rhs_var)
+    pairwise <- count_pairwise(formula, predicted_var)
 
     # Fixed effects of the concentrated index are concentrated out (see fepois).
     # (twoways) Fixed effects of the other index are estimated with par (as kappa_t in fepois).
-    # The concentrated index is the index with more levels. (pairwise) Standard errors are clustered at least at the level of
-    # the concentrated index, so we prefer the index giving more independent clusters (e.g., the index nested in `cluster`).
-    if(fixed_effect == "twoways"){
-      num_level <- sapply(index, function(x) length(unique(data_orig[, x])))
-      if(pairwise == TRUE & clustered == TRUE){
-        num_comp  <- sapply(index, function(x) max(count_components(data_orig[, x], data_orig$cluster___)))
-        index_use <- index[order(-num_comp, -num_level)[1]]
-      }else{
-        index_use <- index[which.max(num_level)]
-      }
-      index_dummy <- setdiff(index, index_use)
-    }else{
-      index_use   <- index[1]
+    index_use <- count_fe_index(data_orig, index, fixed_effect, pairwise, if(clustered == TRUE) data_orig$cluster___ else NULL)
+    index_dummy <- setdiff(index, index_use)
+    if(length(index_dummy) == 0){
       index_dummy <- NULL
     }
     fe_index <- match(data_orig[, index_use], unique(data_orig[, index_use])) # 1, ..., G (no unused levels)
@@ -198,17 +193,31 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
       kappa_ini <- pmax(kappa_ini, 0.01)
     }
 
-    # (pairwise) groups are weighted by 1/(number of observations), and standard errors are clustered by groups
-    # (or by the smallest clusters that contain both groups and `cluster`)
+    # (pairwise) Groups are weighted by 1/(number of observations).
+    # Without `cluster`, observations are independent, and the meat is the variance of the U-statistic (see fepois_dsl_pair_meat).
+    # With `cluster`, standard errors are clustered by the smallest clusters that contain both groups and clusters in `cluster`.
+    # (pairwise, twoways) The fixed effects of the other index are estimated as parameters. With few labeled documents per level,
+    # they bring back the incidental parameter problem.
+    if(pairwise == TRUE & is.null(index_dummy) == FALSE){
+      num_labeled <- tapply(labeled_ind, data_orig[, index_dummy], sum)
+      if(median(num_labeled) < 10){
+        warning(paste0(" With predicted covariates, the fixed effects of `", index_dummy, "` are estimated as parameters, ",
+                       "but its levels have few labeled observations (median ", median(num_labeled), "), which can bias the coefficients. ",
+                       "When `cluster` is specified, `", index_dummy, "` should be nested in `cluster` (e.g., `cluster = \"", index_dummy, "\"`). "), call. = FALSE)
+      }
+    }
     info$index <- fe_index
     info$dummy <- fe_dummy
     info$pairwise <- pairwise
     if(pairwise == TRUE){
       info$omega <- 1/as.numeric(table(fe_index))
-      cluster_comp <- count_components(fe_index, if(clustered == TRUE) data_orig$cluster___ else NULL)
-      if(max(cluster_comp) < 2){
-        stop(paste0(" With predicted covariates, `", model, "` clusters standard errors at least at the level of `", index_use,
-                    "`. Each cluster in `cluster` contains observations of all levels of `", index_use, "`, so standard errors cannot be estimated. "))
+      if(clustered == TRUE){
+        cluster_comp <- count_components(fe_index, data_orig$cluster___)
+        if(max(cluster_comp) < 2){
+          stop(paste0(" With predicted covariates and `cluster`, `", model, "` clusters standard errors by the smallest clusters that contain both ",
+                      "the groups of `", index_use, "` and the clusters in `cluster`. Here, they form a single cluster, so standard errors cannot be estimated. ",
+                      "Please cluster by a variable that contains the groups of `", index_use, "` (e.g., `cluster = \"", index_use, "\"`). "))
+        }
       }
     }
   }else{
@@ -382,11 +391,9 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   n <- nrow(X_orig_use_exp)
 
   # Meat
-  # (fepois, fenegbin with predicted covariates) clustered by groups of the concentrated index (or the smallest clusters containing them)
-  clustered_meat <- clustered
+  # (fepois, fenegbin with predicted covariates and `cluster`) clustered by the smallest clusters containing both groups and clusters
   cluster_meat <- data_orig$cluster___
-  if(isTRUE(info$pairwise)){
-    clustered_meat <- TRUE
+  if(isTRUE(info$pairwise) & clustered == TRUE){
     cluster_meat <- cluster_comp
   }
   Meat_decomp <- dsl_general_moment_base_decomp(par = est0_exp,
@@ -397,7 +404,7 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
                                                 Y_pred = Y_pred,
                                                 X_pred = X_pred_use_exp,
                                                 model  = model,
-                                                clustered = clustered_meat,
+                                                clustered = clustered,
                                                 cluster = cluster_meat,
                                                 info = info)
   # Meat   <- dsl_general_Meat(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model,
@@ -409,7 +416,15 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
   J <- dsl_general_Jacobian(par = est0_exp, labeled_ind, sample_prob_use, Y_orig, X_orig_use_exp, Y_pred, X_pred_use_exp, model, info)
 
   # Variance
-  s_J <- solve(J)
+  if(count_model == TRUE){
+    s_J <- tryCatch(solve(J), error = function(e) NULL)
+    if(is.null(s_J) == TRUE){
+      dsl_stop_convergence(paste0(" The Jacobian of `", model, "` is singular at the estimates, so standard errors cannot be computed. ",
+                                  "This can happen with collinear covariates or covariates that do not vary within fixed effects. "))
+    }
+  }else{
+    s_J <- solve(J)
+  }
   s_J_use <- s_J[1:length(est0), , drop = FALSE]
   rm(s_J)
 
@@ -446,10 +461,8 @@ dsl_general_moment_est <- function(model, formula, labeled, sample_prob, predict
 
   # (fepois, fenegbin with predicted covariates) level of clustering when it differs from `cluster`
   cluster_note <- NULL
-  if(isTRUE(info$pairwise)){
-    if(clustered == FALSE){
-      cluster_note <- paste0("`", index_use, "`")
-    }else if(max(cluster_comp) < length(unique(data_orig$cluster___))){
+  if(isTRUE(info$pairwise) & clustered == TRUE){
+    if(max(cluster_comp) < length(unique(data_orig$cluster___))){
       cluster_note <- paste0("the smallest clusters containing both `", index_use, "` and `cluster`")
     }
   }
@@ -616,8 +629,12 @@ dsl_negbin_solve <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, 
       dsl_stop_convergence(paste0(" The dispersion parameter theta of `", model, "` goes to zero: the labeled observations are far more dispersed ",
                                   "than the negative binomial model allows given the fitted means. Please use `model = ", model_pois, "`, which does not model the variance. "))
     }
-    log_theta_new <- uniroot(moment_theta, interval = range_theta,
-                             f.lower = moment_range[1], f.upper = moment_range[2], tol = 1e-10)$root
+    log_theta_new <- tryCatch(uniroot(moment_theta, interval = range_theta,
+                                      f.lower = moment_range[1], f.upper = moment_range[2], tol = 1e-10)$root,
+                              error = function(e) NA)
+    if(is.finite(log_theta_new) == FALSE){
+      dsl_stop_convergence(paste0(" The moment condition of the dispersion parameter theta of `", model, "` could not be solved. "))
+    }
 
     change <- max(abs(c(par_mean_new - par_mean, log_theta_new - log_theta)))
     par_mean  <- par_mean_new
@@ -632,6 +649,48 @@ dsl_negbin_solve <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, 
     dsl_stop_convergence(paste0(" The estimation of `", model, "` did not converge (the mean parameters and theta keep changing). Please use `model = ", model_pois, "`. "))
   }
   return(c(par_mean, log_theta))
+}
+
+# (fepois, fenegbin) TRUE when an independent variable is predicted (the pairwise moment is used; see fepois)
+count_pairwise <- function(formula, predicted_var){
+  return(any(predicted_var %in% all.vars(delete.response(terms(formula)))))
+}
+
+# (fepois, fenegbin) The index whose fixed effects are concentrated out: the index with more levels.
+# (pairwise with `cluster`) Standard errors are clustered by the smallest clusters containing both groups and `cluster`,
+# so we prefer the index giving more such clusters (e.g., the index nested in `cluster`).
+count_fe_index <- function(data, index, fixed_effect, pairwise, cluster = NULL){
+  if(fixed_effect != "twoways"){
+    return(index[1])
+  }
+  num_level <- sapply(index, function(x) length(unique(data[, x])))
+  if(pairwise == TRUE & is.null(cluster) == FALSE){
+    num_comp <- sapply(index, function(x) max(count_components(data[, x], cluster)))
+    return(index[order(-num_comp, -num_level)[1]])
+  }
+  return(index[which.max(num_level)])
+}
+
+# (fepois, fenegbin with predicted covariates, independent observations) main_1 and main_23 from the variance of the U-statistic.
+# (fenegbin) The score for log(theta) uses only labeled observations; J is block diagonal, so its covariance with the moments
+# for the mean does not affect the standard errors of the coefficients and is omitted.
+fepois_dsl_pair_decomp <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, info){
+  n <- nrow(X_orig)
+  if(model == "fepois"){
+    pr <- fepois_dsl_pair(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info, meat = TRUE)
+    out <- list("main_1" = pr$main_1, "main_23" = pr$main_23)
+  }else{
+    theta <- exp(par[length(par)])
+    par_fe <- par[-length(par)]
+    pr <- fepois_dsl_pair(par_fe, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info, theta, meat = TRUE)
+    th <- fenegbin_dsl_mu_orig(par_fe, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info)
+    s_phi <- negbin_dsl_parts(th$Y_orig, th$mu_orig, theta)$s_phi * as.numeric(th$w > 0)
+    main_1_theta <- sum(labeled_ind/(sample_prob_use^2) * s_phi^2)/n
+    k <- ncol(pr$main_1)
+    out <- list("main_1"  = rbind(cbind(pr$main_1, 0), c(rep(0, k), main_1_theta)),
+                "main_23" = rbind(cbind(pr$main_23, 0), c(rep(0, k), 0)))
+  }
+  return(out)
 }
 
 # (fepois, fenegbin with predicted covariates) Smallest clusters such that every group and every cluster in `cluster` is contained
@@ -655,24 +714,34 @@ count_components <- function(group, cluster = NULL){
 # (count models) Design matrices for every combination of the levels of the discrete predicted covariates and their probabilities.
 # pred_levels: list of levels of each discrete predicted covariate. pred_prob: list of n x (number of levels) matrices of predicted probabilities.
 # The probability of a combination is the product of the probabilities of its levels.
-count_scenario <- function(formula, data_pred, pred_levels, pred_prob){
+count_scenario <- function(formula, data_pred, pred_levels, pred_prob, terms_orig = NULL, xlev_orig = NULL){
   grid <- expand.grid(lapply(pred_levels, seq_along), KEEP.OUT.ATTRS = FALSE)
-  X_list <- list()
-  prob <- matrix(1, nrow = nrow(data_pred), ncol = nrow(grid))
-  for(k in 1:nrow(grid)){
+  n <- nrow(data_pred)
+  K <- nrow(grid)
+  data_list <- list()
+  prob <- matrix(1, nrow = n, ncol = K)
+  for(k in 1:K){
     data_k <- data_pred
     for(v in names(pred_levels)){
       level_k <- pred_levels[[v]][grid[k, v]]
       if(is.factor(data_pred[, v]) == TRUE){
-        data_k[, v] <- factor(rep(level_k, nrow(data_pred)), levels = levels(data_pred[, v]))
+        data_k[, v] <- factor(rep(level_k, n), levels = levels(data_pred[, v]))
       }else{
-        data_k[, v] <- rep(level_k, nrow(data_pred))
+        data_k[, v] <- rep(level_k, n)
       }
       prob[, k] <- prob[, k] * pred_prob[[v]][, grid[k, v]]
     }
-    mf_k <- model.frame(formula, data = data_k, na.action = "na.pass")
-    X_list[[k]] <- model.matrix(formula, data = mf_k)
+    data_list[[k]] <- data_k
   }
+  # The design matrices use the terms of the labeled data (as in predict()), so that terms such as factor(X) or scale(X)
+  # are evaluated as in the labeled data
+  data_all <- do.call("rbind", data_list)
+  if(is.null(terms_orig) == TRUE){
+    terms_orig <- formula
+  }
+  mf_all <- model.frame(terms_orig, data = data_all, na.action = "na.pass", xlev = xlev_orig)
+  X_all <- model.matrix(terms_orig, data = mf_all)
+  X_list <- lapply(1:K, function(k) X_all[((k - 1)*n + 1):(k*n), , drop = FALSE])
   out <- list("X" = X_list, "prob" = prob)
   return(out)
 }
@@ -718,6 +787,10 @@ dsl_general_moment_base_decomp <- function(par, labeled_ind, sample_prob_use, Y_
   }else if(model == "poisson"){
     m_orig <- poisson_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info)
     m_pred <- poisson_dsl_moment_pred(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info)
+
+  }else if(model %in% c("fepois", "fenegbin") & isTRUE(info$pairwise) & clustered == FALSE){
+    # (pairwise, independent observations) variance of the U-statistic
+    return(fepois_dsl_pair_decomp(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, model, info))
 
   }else if(model == "fepois"){
     m_orig <- fepois_dsl_moment_orig(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info)

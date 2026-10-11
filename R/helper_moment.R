@@ -307,7 +307,7 @@ fepois_dsl_fe <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_p
 # For two different observations t and s, the product of DSL versions U_dr_t * V_dr_s decomposes exactly as
 #   U_pred_t * V_pred_s + r_t/pi_t * (U_orig_t - U_pred_t) * V_dr_s + r_s/pi_s * (V_orig_s - V_pred_s) * U_pred_t.
 # m_pred collects the first terms and m_orig - m_pred the others, so the meat (with clusters containing groups) is exact.
-fepois_dsl_pair <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info, theta = NULL, jacobian = FALSE){
+fepois_dsl_pair <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info, theta = NULL, jacobian = FALSE, meat = FALSE){
   n <- nrow(X_orig)
   p <- ncol(X_orig)
   r_pi <- as.numeric(labeled_ind/sample_prob_use)
@@ -391,7 +391,47 @@ fepois_dsl_pair <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y
     dimnames(J) <- NULL
     out$J <- J
   }
+
+  if(meat == TRUE){
+    # Meat when observations are independent (no `cluster`), from the variance of the U-statistic (see fepois_dsl_pair_meat).
+    # main_1 is the part from the DSL corrections (difference from the prediction-only moment), as in other models.
+    meat_dr   <- fepois_dsl_pair_meat(A_dr, B_dr, C_dr, Y_dr, g, info$omega)
+    psi_corr  <- meat_dr$psi - fepois_dsl_pair_meat(a_pred, b_pred, c_pred, y_pred, g, info$omega, psi_only = TRUE)$psi
+    out$main_1  <- crossprod(psi_corr * omega)/n
+    out$main_23 <- meat_dr$meat/n - out$main_1
+  }
   return(out)
+}
+
+# Variance of sum_g omega_g * M_g when observations are independent (also within groups).
+# M_g = sum_{t < s} h_ts is a U-statistic with h_ts = P_ts + P_st and P_ts = A_t B_s - Y_t C_s. With psi_t = sum_{s != t} h_ts,
+#   E[sum_t psi_t psi_t' - sum_{t < s} h_ts h_ts'] = Var(M_g),
+# because pairs of pairs that share no observation are independent. Every term is computed from sums within groups (no loop over pairs).
+fepois_dsl_pair_meat <- function(A, B, C, Y, g, omega, psi_only = FALSE){
+  w  <- omega[g]
+  SA <- rowsum(A, g); SB <- as.numeric(rowsum(B, g)); SC <- rowsum(C, g); SY <- as.numeric(rowsum(Y, g))
+  psi <- A * (SB[g] - B) - (SC[g, , drop = FALSE] - C) * Y + (SA[g, , drop = FALSE] - A) * B - C * (SY[g] - Y)
+  if(psi_only == TRUE){
+    return(list("psi" = psi))
+  }
+
+  w2 <- w^2
+  # sum_g omega_g^2 sum_{t != s} U_t V_t' c_s
+  type_1 <- function(U, V, c){
+    Sc <- as.numeric(rowsum(c, g))
+    return(crossprod(U * (w2 * (Sc[g] - c)), V))
+  }
+  # sum_g omega_g^2 sum_{t != s} U_t V_s'
+  type_2 <- function(U, V){
+    return(crossprod(rowsum(U, g) * omega^2, rowsum(V, g)) - crossprod(U * w2, V))
+  }
+  T_2 <- type_2(A * Y, C * B)
+  half_hh <- type_1(A, A, B^2) - T_2 - t(T_2) + type_1(C, C, Y^2) +
+    type_2(A * B, A * B) - type_1(A, C, B * Y) - type_1(C, A, B * Y) + type_2(C * Y, C * Y)
+
+  meat <- crossprod(psi * w) - half_hh
+  dimnames(meat) <- NULL
+  return(list("meat" = meat, "psi" = psi))
 }
 
 fepois_dsl_moment_base <- function(par, labeled_ind, sample_prob_use, Y_orig, X_orig, Y_pred, X_pred, info, theta = NULL){

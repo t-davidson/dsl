@@ -4,7 +4,7 @@
 #' @param predicted_var A vector of column names in the data that correspond to variables that need to be predicted. Predicted variables should be numeric. For count models, a predicted independent variable can also be categorical (factor, character, or logical) or binary (numeric 0/1). \code{dsl} then predicts the probability of each level and uses the expectation of the moment conditions over the predicted levels.
 #' @param prediction A vector of column names in the data that correspond to predictions of \code{predicted_var}.
 #' @param data A data frame. The class should be \code{data.frame}.
-#' @param cluster A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}. When independent variables are predicted, \code{fepois} and \code{fenegbin} cluster standard errors at least at the level of the fixed effects.
+#' @param cluster A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}. (\code{fepois} and \code{fenegbin} with predicted independent variables) When \code{cluster} is specified, standard errors are clustered by the smallest clusters that contain both the groups of the fixed effects and the clusters in \code{cluster} (\code{summary()} reports it when they differ from \code{cluster}).
 #' @param labeled (Optional) A column name in the data that indicates which observation is labeled. It should be a vector of 1 (labeled) and 0 (non-labeled). When \code{NULL}, the function assumes that observations that have \code{NA} in \code{predicted_var} are non-labeled and other observations are labeled.
 #' @param sample_prob (Optional) A column name in the data that correspond to the sampling probability for labeling a particular observation. When \code{NULL}, the function assumes random sampling with equal probabilities.
 #' @param fixed_effect (Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).
@@ -20,7 +20,7 @@
 #' @importFrom estimatr lm_robust
 #' @importFrom matrixcalc is.positive.definite
 #' @importFrom arm model.matrixBayes
-#' @importFrom stats as.formula ave delete.response glm lm median model.frame model.matrix model.offset model.response optim predict sd pnorm qnorm relevel terms uniroot var
+#' @importFrom stats .getXlevels as.formula ave delete.response glm lm median model.frame model.matrix model.offset model.response optim predict sd pnorm qnorm relevel terms uniroot var
 #' @importFrom utils capture.output
 #' @importFrom graphics points
 #' @import tidyverse
@@ -70,7 +70,13 @@ dsl <- function(model = "lm",
     stop(" Please specify at least one of `prediction` and `feature` ")
   }
 
-  if((is.character(family) & length(family) == 1 & all(family %in% c("gaussian", "binomial"))) == FALSE){
+  if(is.function(family) == TRUE){
+    family <- family()
+  }
+  if(inherits(family, "family") == TRUE){
+    family <- family$family
+  }
+  if(isTRUE(is.character(family) && length(family) == 1 && family %in% c("gaussian", "binomial")) == FALSE){
     stop(" `family` should be either `gaussian` or `binomial`. For count variables, please use `gaussian`. ")
   }
   count_model <- model %in% c("poisson", "fepois", "negbin", "fenegbin")
@@ -238,7 +244,24 @@ dsl <- function(model = "lm",
   # Data Preparation
   # ##################
   # Unique Cluster
-  uniq_cluster <- sort(unique(data$cluster___))
+  # Units of cross-fitting folds: clusters (observations without `cluster`).
+  # (fepois, fenegbin with predicted covariates) The pairwise moment combines documents of the same group. Folds keep groups together
+  # so that predictions do not depend on the labels of other documents in the same group.
+  data$fold___ <- data$cluster___
+  if(model %in% c("fepois", "fenegbin")){
+    if(count_pairwise(formula, predicted_var) == TRUE){
+      cluster_fold <- NULL
+      if(clustered == TRUE){
+        cluster_fold <- data$cluster___
+      }
+      index_fold <- count_fe_index(data, index, fixed_effect, TRUE, cluster_fold)
+      data$fold___ <- count_components(data[, index_fold], cluster_fold)
+    }
+  }
+  uniq_cluster <- sort(unique(data$fold___))
+  if(length(uniq_cluster) < cross_fit){
+    stop(paste0(" `cross_fit` (", cross_fit, ") should not be larger than the number of clusters (", length(uniq_cluster), ") used for cross-fitting. "))
+  }
 
   # Number of Columns we analyze
   ncol_X <- ncol(model.matrix(formula, data = data))
@@ -276,6 +299,7 @@ dsl <- function(model = "lm",
   RMSE_cv <- matrix(NA, nrow = length(predicted_var), ncol = sample_split)
   dm_theta_l <- rep(NA, sample_split)
   split_fail <- rep(FALSE, sample_split)
+  message_fail <- c()
 
   # ######################
   # Sample Splitting
@@ -309,8 +333,8 @@ dsl <- function(model = "lm",
       train_id <- uniq_cluster[id_base != i_use]
       test_id  <- setdiff(uniq_cluster, train_id)
 
-      train_which <- unlist(sapply(train_id, function(x) which(data$cluster___ == x)))
-      test_which  <- unlist(sapply(test_id, function(x) which(data$cluster___ == x)))
+      train_which <- unlist(sapply(train_id, function(x) which(data$fold___ == x)))
+      test_which  <- unlist(sapply(test_id, function(x) which(data$fold___ == x)))
 
       data_train     <- data[train_which, , drop = FALSE]
       data_test      <- data[test_which, , drop = FALSE]
@@ -349,7 +373,7 @@ dsl <- function(model = "lm",
 
           # placeholder for the column of the predicted covariate (the moments use prob_test)
           if(is.factor(data[, v]) == TRUE){
-            predicted_var_test <- factor(rep(lev[1], nrow(data_test)), levels = lev)
+            predicted_var_test <- rep(lev[1], nrow(data_test))  # converted to a factor below
           }else{
             predicted_var_test <- prob_test[, 2]
           }
@@ -398,7 +422,11 @@ dsl <- function(model = "lm",
     data_pred <- data_orig <- data[id_final, , drop = FALSE]
 
     for(v_use in 1:length(predicted_var)){
-      data_pred[, predicted_var[v_use]] <- dm_predicted_var[[v_use]]
+      if(is.factor(data[, predicted_var[v_use]]) == TRUE){
+        data_pred[, predicted_var[v_use]] <- factor(dm_predicted_var[[v_use]], levels = levels(data[, predicted_var[v_use]]))
+      }else{
+        data_pred[, predicted_var[v_use]] <- dm_predicted_var[[v_use]]
+      }
     }
     RMSE_cv[1:length(predicted_var), ss_use] <- apply(RMSE_cv0, 1, mean, na.rm = TRUE)
 
@@ -423,7 +451,7 @@ dsl <- function(model = "lm",
                        dsl_convergence = function(e) e)
     if(inherits(fit_dm, "dsl_convergence") == TRUE){
       split_fail[ss_use] <- TRUE
-      message_fail <- conditionMessage(fit_dm)
+      message_fail <- unique(c(message_fail, conditionMessage(fit_dm)))
       next
     }
     coef_name <- names(fit_dm$coefficients)
@@ -451,11 +479,12 @@ dsl <- function(model = "lm",
 
   # Sample splits whose moment conditions could not be solved are dropped
   if(all(split_fail) == TRUE){
-    stop(message_fail, call. = FALSE)
+    stop(paste(message_fail, collapse = " | "), call. = FALSE)
   }
   if(any(split_fail) == TRUE){
-    warning(paste0(sum(split_fail), " of ", sample_split, " sample splits were dropped because the estimation failed:", message_fail), call. = FALSE)
+    warning(paste0(sum(split_fail), " of ", sample_split, " sample splits were dropped because the estimation failed:", paste(message_fail, collapse = " | ")), call. = FALSE)
     keep <- (split_fail == FALSE)
+    RMSE_cv <- RMSE_cv[, keep, drop = FALSE]
     dm_point_l <- dm_point_l[keep, , drop = FALSE]
     dm_se_l <- dm_se_l[keep, , drop = FALSE]
     dm_vcov_l <- dm_vcov_l[, , keep, drop = FALSE]

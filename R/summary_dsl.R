@@ -96,7 +96,7 @@ summary.dsl <- function(object, ci = 0.95, digits = 4, ...){
   }
   if(is.null(object$internal$cluster_note) == FALSE){
     cat(paste0("\nStandard errors are clustered by ", object$internal$cluster_note,
-               " (with predicted covariates, ", object$internal$model, " clusters at least by the fixed effects)."))
+               " (with predicted covariates and `cluster`, ", object$internal$model, " clusters by groups of fixed effects and clusters)."))
   }else if(is.null(object$internal$cluster) == FALSE){
     cat(paste0("\nStandard errors are clustered by ", object$internal$cluster, "."))
   }
