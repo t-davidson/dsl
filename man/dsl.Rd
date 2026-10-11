@@ -46,7 +46,7 @@ dsl(
 
 \item{sl_method}{A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).}
 
-\item{feature}{A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}). When independent variables are predicted, including the outcome and the other independent variables in \code{feature} usually makes the estimates much more precise.}
+\item{feature}{A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}). When independent variables are predicted, including the outcome and the other independent variables in \code{feature} can make the estimates substantially more precise.}
 
 \item{family}{(Used when making predictions with \code{SuperLearner} methods) \code{gaussian} (default) or \code{binomial} (for binary \code{predicted_var}). For count variables, use \code{gaussian}. Predictions are kept within the range of the labeled values of \code{predicted_var}.}
 
