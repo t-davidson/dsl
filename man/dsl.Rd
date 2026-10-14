@@ -26,15 +26,15 @@ dsl(
 \arguments{
 \item{model}{A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), \code{fepois} (fixed-effects Poisson regression), \code{negbin} (negative binomial regression for overdispersed count outcomes), and \code{fenegbin} (fixed-effects negative binomial regression).}
 
-\item{formula}{A formula used in the specified regression model.}
+\item{formula}{A formula used in the specified regression model. For count models (\code{poisson}, \code{fepois}, \code{negbin}, and \code{fenegbin}), it can include an offset, e.g., \code{Y ~ X + offset(log(exposure))}, where the offset cannot contain variables in \code{predicted_var}.}
 
-\item{predicted_var}{A vector of column names in the data that correspond to variables that need to be predicted.}
+\item{predicted_var}{A vector of column names in the data that correspond to variables that need to be predicted. Predicted variables should be numeric. For count models, a predicted independent variable can also be categorical (factor, character, or logical) or binary (numeric 0/1). \code{dsl} then predicts the probability of each level and uses the expectation of the moment conditions over the predicted levels.}
 
 \item{prediction}{A vector of column names in the data that correspond to predictions of \code{predicted_var}.}
 
 \item{data}{A data frame. The class should be \code{data.frame}.}
 
-\item{cluster}{A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}.}
+\item{cluster}{A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}. (\code{fepois} and \code{fenegbin} with predicted independent variables) When \code{cluster} is specified, standard errors are clustered by the smallest clusters that contain both the groups of the fixed effects and the clusters in \code{cluster} (\code{summary()} reports it when they differ from \code{cluster}).}
 
 \item{labeled}{(Optional) A column name in the data that indicates which observation is labeled. It should be a vector of 1 (labeled) and 0 (non-labeled). When \code{NULL}, the function assumes that observations that have \code{NA} in \code{predicted_var} are non-labeled and other observations are labeled.}
 
@@ -46,13 +46,13 @@ dsl(
 
 \item{sl_method}{A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).}
 
-\item{feature}{A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}).}
+\item{feature}{A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}). When independent variables are predicted, including the outcome and the other independent variables in \code{feature} can make the estimates substantially more precise.}
 
-\item{family}{(Used when making predictions) A variable type of \code{predicted_var}. Default is \code{gaussian}.}
+\item{family}{(Used when making predictions with \code{SuperLearner} methods) \code{gaussian} (default) or \code{binomial} (for binary \code{predicted_var}). For count variables, use \code{gaussian}. Predictions are kept within the range of the labeled values of \code{predicted_var}.}
 
 \item{cross_fit}{The fold of cross-fitting. Default is \code{5}.}
 
-\item{sample_split}{The number of sampling-splitting. Default is \code{10}.}
+\item{sample_split}{The number of sampling-splitting. Default is \code{10}. (Count models) When the moment conditions cannot be solved in some sample splits, these sample splits are dropped with a warning.}
 
 \item{seed}{Numeric \code{seed} used internally. Default is \code{1234}.}
 }
