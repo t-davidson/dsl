@@ -54,7 +54,7 @@ power_dsl(
 
 \item{feature}{A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}).}
 
-\item{family}{(Used when making predictions) A variable type of \code{predicted_var}. Default is \code{gaussian}.}
+\item{family}{(Used when making predictions with \code{SuperLearner} methods) \code{gaussian} (default) or \code{binomial} (for binary \code{predicted_var}). For count variables, use \code{gaussian}.}
 
 \item{cross_fit}{The fold of cross-fitting. Default is \code{5}.}
 
@@ -72,4 +72,7 @@ power_dsl(
 }
 \description{
 Power Analysis for DSL Regression
+}
+\details{
+For \code{fepois} and \code{fenegbin} with predicted independent variables, the variance does not scale exactly with the inverse of the number of labeled documents (pairs of documents enter the estimating equation), so the predicted standard errors are approximate.
 }

@@ -23,7 +23,9 @@ output:
 
 - [**`fenegbin`: Fixed Effects Negative Binomial Regression**](#fenegbin) <br>
 
-- [**Choosing among models for count outcomes**](#countchoice) <br>
+- [**Count Models with Predicted Independent Variables**](#countx) <br>
+
+- [**Choosing among Models for Count Outcomes**](#countchoice) <br>
 
 
 </div>
@@ -117,6 +119,8 @@ summary(out_poisson)
 
 As in a standard Poisson regression, coefficients are on the log scale, and `exp()` of a coefficient is the multiplicative change in the expected count (the incidence rate ratio). Because `dsl` estimates standard errors with the robust (sandwich) variance, `model = "poisson"` is Poisson Pseudo Maximum Likelihood (PPML). It only assumes that the expected count is `exp()` of the linear predictor, so the outcome does not need to follow a Poisson distribution (e.g., overdispersed counts are allowed) or be an integer. It should be non-negative.
 
+All count models (`poisson`, `fepois`, `negbin`, and `fenegbin`) accept an offset in `formula`. For example, when `Y` counts mentions in documents of different lengths, `formula = Y ~ X1 + X2 + offset(log(length))` models the rate per unit of length (the coefficient of `log(length)` is fixed at 1). The offset cannot contain variables in `predicted_var`.
+
 <br>
 
 ### **`felm`: Fixed Effects Linear Regression**{#felm} 
@@ -206,7 +210,9 @@ summary(out_fepois)
 
 As in `model = "poisson"`, coefficients are on the log scale and the estimator is Poisson Pseudo Maximum Likelihood (PPML), which allows overdispersed and non-integer outcomes. `fixed_effect = "oneway"` with one element in `index` implements one-way fixed effects.
 
-We recommend `model = "fepois"` over adding fixed effects as dummy variables (e.g., `factor(unit)`) to `model = "poisson"`. The DSL estimator of the fixed effect of each group relies on the DSL-corrected sum of the outcome within the group. When a group is small, one labeled observation with a large prediction error can make this sum negative, and the fixed effect (the log of a negative number) is not defined. `model = "fepois"` estimates the fixed effects on the exponentiated scale, where they are defined even in such cases, and concentrates out the fixed effects of the index with more levels (with `fixed_effect = "twoways"`, the fixed effects of the other index are estimated together with the coefficients). When all fixed effects are defined, it gives the same estimates and standard errors as the dummy-variable approach. 
+We recommend `model = "fepois"` over adding fixed effects as dummy variables (e.g., `factor(unit)`) to `model = "poisson"`. The DSL estimator of the fixed effect of each group relies on the DSL-corrected sum of the outcome within the group. When a group is small, one labeled observation with a large prediction error can make this sum negative, and the fixed effect (the log of a negative number) is not defined. `model = "fepois"` estimates the fixed effects on the exponentiated scale, where they remain defined in such cases, and concentrates out the fixed effects of the index with more levels (with `fixed_effect = "twoways"`, the fixed effects of the other index are estimated together with the coefficients). When all fixed effects are defined, it gives the same estimates and standard errors as the dummy-variable approach. In rare cases (e.g., heavy-tailed counts, many small groups, and poor predictions), the estimating equations have no solution; `dsl` then drops the sample split with a warning, or stops with an error when no sample split can be estimated.
+
+When independent variables are in `predicted_var`, `model = "fepois"` uses a different estimating equation. The approach above would estimate each fixed effect from the few labeled documents of its group, which biases the coefficients when groups are small, and the bias does not shrink as the number of groups grows. Instead, `fepois` compares pairs of documents within each group, as in the conditional likelihood of the Poisson model, so the fixed effects never need to be estimated. Each pair combines the DSL-corrected quantities of two different documents, whose labeling is independent, so the estimating equation is exactly unbiased for any group size. Pairs of documents in the same group share documents, and standard errors account for this dependence. With `cluster`, standard errors are clustered by the smallest clusters that contain both the groups of the fixed effects and the clusters in `cluster` (`summary()` reports it when this differs from `cluster`). See [Count Models with Predicted Independent Variables](#countx) for an example.
 
 <br>
 
@@ -227,7 +233,7 @@ summary(out_negbin)
 
 The negative binomial model assumes `Var(Y | X) = mu + mu^2/theta`, where `theta` is the dispersion parameter (reported at the bottom of `summary()` and stored in `out_negbin$theta`). Coefficients are on the log scale, as in `model = "poisson"`. They are estimated by maximum likelihood, and `theta` is estimated by maximum likelihood using the labeled observations (predictions carry no information about the dispersion of the outcome). Because standard errors are robust (sandwich), the coefficients and their standard errors remain valid when the expected count is correctly specified, even if the outcome does not follow the negative binomial distribution. 
 
-`model = "poisson"` and `model = "negbin"` estimate the same coefficients when the expected count is correctly specified, and both are valid for overdispersed outcomes. In our simulations with 10-20% of documents labeled, `negbin` was not more precise than `poisson`: the precision of DSL depends mostly on the labeled documents, and the negative binomial weights did not reduce this part. `model = "poisson"` is a good default, and `model = "negbin"` is useful when the negative binomial model itself is of interest (e.g., `theta`).
+`model = "poisson"` and `model = "negbin"` estimate the same coefficients when the expected count is correctly specified, and both are valid for overdispersed outcomes. In our simulations with 10-20% of documents labeled, `negbin` was not more precise than `poisson`: the precision of DSL depends mostly on the labeled documents, and the negative binomial weights did not reduce this part. `model = "poisson"` is a good default, and `model = "negbin"` is useful when the negative binomial model itself is of interest (e.g., `theta`). With strongly unequal sampling probabilities (`sample_prob`), the estimating equations of `negbin` can have several solutions or none, and `dsl` may drop sample splits or stop with an error; `model = "poisson"` is more stable in this case.
 
 
 <br>
@@ -250,13 +256,46 @@ out_fenegbin <- dsl(model = "fenegbin",
 summary(out_fenegbin)
 ```
 
-Fixed effects are handled as in `model = "fepois"`. The coefficients solve the moments of `fepois` weighted by the negative binomial weights `theta/(theta + mu)`, and `theta` is estimated by maximum likelihood using the labeled observations. In maximum likelihood (e.g., `fixest::fenegbin`), `mu` in the weights uses the estimated fixed effects. With DSL, the fixed effect of a group depends heavily on its few labeled observations (weighted by the inverse of the sampling probability), and weights that depend on them bias the coefficients (the incidental parameter problem). Thus, `fenegbin` computes `mu` in the weights with fixed effects estimated only from predictions. The moments are then valid for any weights, as in `model = "fepois"`, and the weights only affect efficiency.
+Fixed effects are handled as in `model = "fepois"`, including predicted independent variables. The coefficients solve the moments of `fepois` with every document weighted by the negative binomial weight `theta/(theta + mu)`, and `theta` is estimated by maximum likelihood using the labeled observations. In maximum likelihood (e.g., `fixest::fenegbin`), `mu` in the weights uses the estimated fixed effect of each group. With DSL, weights that depend on the outcomes or predictions of the same group bias the coefficients when groups are small (the incidental parameter problem). Thus, `fenegbin` computes `mu` in the weights from the coefficients of `fepois` and one overall scale, without fixed effects. The weights then depend only on the covariates, the moments remain unbiased as in `fepois`, and the weights only affect efficiency. `theta` is an auxiliary parameter for the weights; with few labeled documents per group, it is imprecise.
 
-When each fixed effect has enough labeled documents, `fenegbin` can be substantially more precise than `fepois`. In our simulations with overdispersed outcomes, its standard errors were 20-30% smaller than those of `fepois` with one-way fixed effects (50 groups of 40 documents, 20% labeled) and with two-way fixed effects (100 units over 20 years, 20% labeled). As `theta` is estimated with the labeled documents, it is imprecise when there are few labeled documents per fixed effect (e.g., two-way fixed effects with 4-5 labeled documents per level). Then, `fenegbin` can be less precise than `fepois`, or it may fail to estimate `theta` and stop with an error recommending `fepois`, which is valid in all these cases.
+In our simulations with overdispersed counts (`theta = 1`), `fenegbin` was unbiased even with 4 documents per group. Its standard deviations were 2-20% smaller than those of `fepois` when the outcome was predicted, and 10-20% smaller when an independent variable was predicted. When the outcome is not overdispersed, `theta` diverges, and `fenegbin` stops with an error recommending `fepois`.
 
 <br>
 
-### **Choosing among models for count outcomes**{#countchoice} 
+### **Count Models with Predicted Independent Variables**{#countx} 
+<p class="lh-lg">
+</p>
+
+In many applications, the count outcome is observed for all documents (e.g., the number of retweets or the number of words), and the independent variable of interest is annotated by an LLM (e.g., the topic of a document). All count models allow independent variables in `predicted_var`. In `data_count_x`, `Y` is an observed count, `topic` is a categorical variable annotated by experts for 20% of documents (`NA` otherwise), and `pred_topic` is the topic predicted by an LLM. Documents are nested in `unit`.
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+data("data_count_x") # example data 
+head(data_count_x)
+```
+
+```{r eval = TRUE, echo = TRUE, tidy = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+out_count_x <- dsl(model = "fepois", 
+                   formula = Y ~ topic + X1,
+                   predicted_var = "topic",
+                   prediction = "pred_topic",
+                   feature = c("Y", "X1"),
+                   fixed_effect = "oneway", 
+                   index = "unit", 
+                   data = data_count_x)
+summary(out_count_x)
+```
+
+Three features of count models matter here.
+
+- **Categorical and binary variables.** A predicted independent variable can be a factor, a character, a logical, or a numeric 0/1 variable. `dsl` predicts the probability of each category (with `sl_method`, using `prediction` and `feature` as predictors) and replaces the moment conditions of unlabeled documents by their expectation over the predicted categories. Other predicted independent variables should be numeric, and their predictions are used directly.
+- **Use the outcome and the other independent variables as predictors.** When an independent variable is predicted, its predictions are most useful when they also use the outcome and the other independent variables (here, `feature = c("Y", "X1")`). This does not affect the validity of DSL, which does not require any assumption about the predictions, but it can make the estimates more precise. In our simulations, it reduced the standard deviation of the coefficient by about 20-40%, and much more when the annotations were noisy and the effect of `X` was large.
+- **Fixed effects.** With `fepois` and `fenegbin`, a predicted independent variable changes the estimating equation (see [`fepois`](#fepois)). With `fixed_effect = "twoways"`, the fixed effects of one index are estimated as parameters, so each of its levels should have many labeled documents (e.g., years in a panel of many units).
+
+**How much does DSL help?** In our simulations with 500 groups of 5 documents, 20% labeled, and overdispersed counts, `fepois` and `fenegbin` with a predicted binary or three-category `X` were unbiased, and 95% confidence intervals covered the truth in 93-97% of datasets. Compared with using only the labeled documents, the standard deviation of the coefficient of `X` was 35-47% smaller with accurate annotations (95% correct). With noisier annotations (75-85% correct), the gain ranged from none to about 40%, and it was smaller when the outcome was more overdispersed. Coefficients of observed covariates were two to three times more precise. `fenegbin` was the most precise and the most stable: with `fepois`, 2 of 200 simulated datasets gave estimates far from the truth (with very large standard errors).
+
+<br>
+
+### **Choosing among Models for Count Outcomes**{#countchoice} 
 <p class="lh-lg">
 </p>
 
@@ -278,6 +317,6 @@ The table below shows a simulation with a highly overdispersed outcome (`theta =
 Based on these results, we recommend:
 
 - **`model = "poisson"` with `cluster`** as the default for count outcomes, including highly overdispersed ones. If clusters may differ in ways that are related to the covariates, use `model = "fepois"` with `index` set to the cluster variable.
-- **`model = "negbin"` (or `fenegbin`) as a robustness check.** Its estimates should agree with those of `poisson` (or `fepois`) when the expected count is correctly specified; a noticeable difference suggests that the model for the expected count is misspecified. `fenegbin` can be more precise than `fepois` when each fixed effect has enough labeled documents (see above).
+- **`model = "negbin"` (or `fenegbin`) as a robustness check.** Its estimates should agree with those of `poisson` (or `fepois`) when the expected count is correctly specified; a noticeable difference suggests that the model for the expected count is misspecified. With fixed effects, `fenegbin` was 2-20% more precise than `fepois` in our simulations with overdispersed outcomes, and more stable with predicted independent variables in short panels.
 - **`model = "lm"` only when additive effects are of interest.** With heavy-tailed counts, a few large documents dominate linear regression, which makes it less precise. Avoid linear regression on `log(Y + 1)`, which does not estimate the effect on the expected count.
 - With heavy-tailed counts and around 100 clusters, confidence intervals of all models can be somewhat too narrow (coverage of 0.88-0.95 in the simulation above). More labeled documents or more clusters help.

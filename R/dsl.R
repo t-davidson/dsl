@@ -1,26 +1,26 @@
 #' Estimating Regression using the DSL framework
 #' @param model A regression model \code{dsl} currently supports \code{lm} (linear regression), \code{logit} (logistic regression), \code{poisson} (Poisson regression for count outcomes, estimated as Poisson Pseudo Maximum Likelihood), \code{felm} (fixed-effects regression), \code{fepois} (fixed-effects Poisson regression), \code{negbin} (negative binomial regression for overdispersed count outcomes), and \code{fenegbin} (fixed-effects negative binomial regression).
-#' @param formula A formula used in the specified regression model.
-#' @param predicted_var A vector of column names in the data that correspond to variables that need to be predicted.
+#' @param formula A formula used in the specified regression model. For count models (\code{poisson}, \code{fepois}, \code{negbin}, and \code{fenegbin}), it can include an offset, e.g., \code{Y ~ X + offset(log(exposure))}, where the offset cannot contain variables in \code{predicted_var}.
+#' @param predicted_var A vector of column names in the data that correspond to variables that need to be predicted. Predicted variables should be numeric. For count models, a predicted independent variable can also be categorical (factor, character, or logical) or binary (numeric 0/1). \code{dsl} then predicts the probability of each level and uses the expectation of the moment conditions over the predicted levels.
 #' @param prediction A vector of column names in the data that correspond to predictions of \code{predicted_var}.
 #' @param data A data frame. The class should be \code{data.frame}.
-#' @param cluster A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}.
+#' @param cluster A column name in the data that indicates the level at which cluster standard errors are calculated. Default is \code{NULL}. (\code{fepois} and \code{fenegbin} with predicted independent variables) When \code{cluster} is specified, standard errors are clustered by the smallest clusters that contain both the groups of the fixed effects and the clusters in \code{cluster} (\code{summary()} reports it when they differ from \code{cluster}).
 #' @param labeled (Optional) A column name in the data that indicates which observation is labeled. It should be a vector of 1 (labeled) and 0 (non-labeled). When \code{NULL}, the function assumes that observations that have \code{NA} in \code{predicted_var} are non-labeled and other observations are labeled.
 #' @param sample_prob (Optional) A column name in the data that correspond to the sampling probability for labeling a particular observation. When \code{NULL}, the function assumes random sampling with equal probabilities.
 #' @param fixed_effect (Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A type of fixed effects regression you run. \code{oneway} (one-way fixed effects) or \code{twoways} (two-way fixed effects).
 #' @param index (Used when \code{model = "felm"}, \code{model = "fepois"}, or \code{model = "fenegbin"}) A vector of column names specifying fixed effects. When \code{fixed_effect = oneway}, it has one element. When \code{fixed_effect = twoways}, it has two elements, e.g., \code{index = c("state", "year")}.
 #' @param sl_method A name of a supervised machine learning model used internally to predict \code{predicted_var} by fine-tuning \code{prediction} or using predictors (specified in \code{feature}) when \code{prediction = NULL}. Users can run \code{available_method()} to see available supervised machine learning methods. Default is \code{grf} (generalized random forest).
-#' @param feature A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}).
-#' @param family (Used when making predictions) A variable type of \code{predicted_var}. Default is \code{gaussian}.
+#' @param feature A vector of column names in the data that correspond to predictors used to fit a supervised machine learning (specified in \code{sl_method}). When independent variables are predicted, including the outcome and the other independent variables in \code{feature} can make the estimates substantially more precise.
+#' @param family (Used when making predictions with \code{SuperLearner} methods) \code{gaussian} (default) or \code{binomial} (for binary \code{predicted_var}). For count variables, use \code{gaussian}. Predictions are kept within the range of the labeled values of \code{predicted_var}.
 #' @param cross_fit The fold of cross-fitting. Default is \code{5}.
-#' @param sample_split The number of sampling-splitting. Default is \code{10}.
+#' @param sample_split The number of sampling-splitting. Default is \code{10}. (Count models) When the moment conditions cannot be solved in some sample splits, these sample splits are dropped with a warning.
 #' @param seed Numeric \code{seed} used internally. Default is \code{1234}.
 #' @rawNamespace import(Matrix, except = summary)
 #' @importFrom grf regression_forest
 #' @importFrom estimatr lm_robust
 #' @importFrom matrixcalc is.positive.definite
 #' @importFrom arm model.matrixBayes
-#' @importFrom stats as.formula glm lm median model.frame model.matrix model.response optim predict sd pnorm qnorm relevel terms uniroot var
+#' @importFrom stats .getXlevels as.formula ave delete.response glm lm median model.frame model.matrix model.offset model.response optim predict sd pnorm qnorm relevel terms uniroot var
 #' @importFrom utils capture.output
 #' @importFrom graphics points
 #' @import tidyverse
@@ -68,6 +68,29 @@ dsl <- function(model = "lm",
 
   if(is.null(prediction) & is.null(feature)){
     stop(" Please specify at least one of `prediction` and `feature` ")
+  }
+
+  if(is.function(family) == TRUE){
+    family <- family()
+  }
+  if(inherits(family, "family") == TRUE){
+    family <- family$family
+  }
+  if(isTRUE(is.character(family) && length(family) == 1 && family %in% c("gaussian", "binomial")) == FALSE){
+    stop(" `family` should be either `gaussian` or `binomial`. For count variables, please use `gaussian`. ")
+  }
+  count_model <- model %in% c("poisson", "fepois", "negbin", "fenegbin")
+
+  # Offset (count models only)
+  terms_formula <- terms(formula)
+  if(is.null(attr(terms_formula, "offset")) == FALSE){
+    if(count_model == FALSE){
+      stop(" `offset()` in `formula` is supported only for count models (`poisson`, `fepois`, `negbin`, and `fenegbin`). ")
+    }
+    offset_var <- unlist(lapply(attr(terms_formula, "offset"), function(j) all.vars(attr(terms_formula, "variables")[[j + 1]])))
+    if(any(offset_var %in% predicted_var)){
+      stop(" `offset()` in `formula` cannot contain variables in `predicted_var`. ")
+    }
   }
 
   # Model-Specific Check
@@ -172,6 +195,46 @@ dsl <- function(model = "lm",
     rm(mf_check)
   }
 
+  # Discrete predicted covariates.
+  # (count models) Factor, character, logical, or numeric 0/1 covariates in `predicted_var` are predicted as probabilities of their levels,
+  # and the prediction part of the moments is the expectation over the predicted distribution (see `count_stack`).
+  # (other models) Predicted covariates should be numeric.
+  rhs_var <- all.vars(delete.response(terms_formula))
+  pred_levels <- NULL
+  for(v in intersect(predicted_var, rhs_var)){
+    x_lab <- data[data[, labeled] == 1, v]
+    if(is.factor(data[, v]) | is.character(data[, v]) | is.logical(data[, v])){
+      if(count_model == FALSE){
+        stop(paste0(" `", v, "` in `predicted_var` should be numeric for `model = ", model, "`. Please code a categorical variable as numeric 0/1 indicator variables. "))
+      }
+      if(is.factor(data[, v]) == TRUE){
+        lev <- levels(data[, v])[levels(data[, v]) %in% as.character(x_lab)]
+      }else{
+        lev <- sort(unique(as.character(x_lab)))
+      }
+      if(length(lev) < 2){
+        stop(paste0(" `", v, "` in `predicted_var` takes only one value in the labeled data. "))
+      }
+      data[, v] <- factor(as.character(data[, v]), levels = lev)
+      pred_levels[[v]] <- lev
+    }else if(count_model == TRUE & all(x_lab %in% c(0, 1)) & length(unique(x_lab)) == 2){
+      pred_levels[[v]] <- c(0, 1)
+    }
+  }
+  if(is.null(pred_levels) == FALSE){
+    num_scenario <- prod(sapply(pred_levels, length))
+    if(num_scenario > 100){
+      stop(" Discrete predicted covariates have too many combinations of levels (more than 100). ")
+    }
+  }
+
+  # Character predictors are converted to factors with levels in the whole data (so that every fold has the same columns)
+  for(v in covariates_use){
+    if(is.character(data[, v]) == TRUE){
+      data[, v] <- factor(data[, v])
+    }
+  }
+
   # Standardize sample_prob
   mean_prob <- sum(data[, labeled], na.rm = TRUE)/nrow(data)
   data[, sample_prob] <- data[, sample_prob]*(mean_prob/mean(data[, sample_prob], na.rm = TRUE))
@@ -181,7 +244,24 @@ dsl <- function(model = "lm",
   # Data Preparation
   # ##################
   # Unique Cluster
-  uniq_cluster <- sort(unique(data$cluster___))
+  # Units of cross-fitting folds: clusters (observations without `cluster`).
+  # (fepois, fenegbin with predicted covariates) The pairwise moment combines documents of the same group. Folds keep groups together
+  # so that predictions do not depend on the labels of other documents in the same group.
+  data$fold___ <- data$cluster___
+  if(model %in% c("fepois", "fenegbin")){
+    if(count_pairwise(formula, predicted_var) == TRUE){
+      cluster_fold <- NULL
+      if(clustered == TRUE){
+        cluster_fold <- data$cluster___
+      }
+      index_fold <- count_fe_index(data, index, fixed_effect, TRUE, cluster_fold)
+      data$fold___ <- count_components(data[, index_fold], cluster_fold)
+    }
+  }
+  uniq_cluster <- sort(unique(data$fold___))
+  if(length(uniq_cluster) < cross_fit){
+    stop(paste0(" `cross_fit` (", cross_fit, ") should not be larger than the number of clusters (", length(uniq_cluster), ") used for cross-fitting. "))
+  }
 
   # Number of Columns we analyze
   ncol_X <- ncol(model.matrix(formula, data = data))
@@ -218,6 +298,8 @@ dsl <- function(model = "lm",
   dm_vcov_D_l <- array(NA, dim = c(ncol_X, ncol_X, sample_split))
   RMSE_cv <- matrix(NA, nrow = length(predicted_var), ncol = sample_split)
   dm_theta_l <- rep(NA, sample_split)
+  split_fail <- rep(FALSE, sample_split)
+  message_fail <- c()
 
   # ######################
   # Sample Splitting
@@ -241,6 +323,7 @@ dsl <- function(model = "lm",
     id_base <- id_base_all[[ss_use]]
 
     dm_predicted_var <- list()
+    dm_prob <- list()
     id_final <- c()
     RMSE_cv0 <- matrix(NA, nrow = length(predicted_var), ncol = cross_fit)
     # ############
@@ -250,8 +333,8 @@ dsl <- function(model = "lm",
       train_id <- uniq_cluster[id_base != i_use]
       test_id  <- setdiff(uniq_cluster, train_id)
 
-      train_which <- unlist(sapply(train_id, function(x) which(data$cluster___ == x)))
-      test_which  <- unlist(sapply(test_id, function(x) which(data$cluster___ == x)))
+      train_which <- unlist(sapply(train_id, function(x) which(data$fold___ == x)))
+      test_which  <- unlist(sapply(test_id, function(x) which(data$fold___ == x)))
 
       data_train     <- data[train_which, , drop = FALSE]
       data_test      <- data[test_which, , drop = FALSE]
@@ -259,18 +342,65 @@ dsl <- function(model = "lm",
       # Fit the model E( predicted_var | covariates_use, R = 1) in the training sample
 
       for(v_use in 1:length(predicted_var)){
-        fit_train <- fit_model(outcome = predicted_var[v_use], labeled = labeled, prediction = prediction,
-                               covariates = covariates_use,
-                               data = data_train[data_train[, labeled] == 1, , drop = FALSE],
-                               seed = seed, method = sl_method, family = family)
+        v <- predicted_var[v_use]
+        if(v %in% names(pred_levels)){
+          # (count models) discrete predicted covariates: predict the probability of each level
+          # (with two levels, only the probability of the second level)
+          lev <- pred_levels[[v]]
+          prob_test <- matrix(NA, nrow = nrow(data_test), ncol = length(lev))
+          level_fit <- if(length(lev) == 2) 2 else seq_along(lev)
+          RMSE_k <- c()
+          for(k in level_fit){
+            data_train$indicator___ <- as.numeric(data_train[, v] == lev[k])
+            data_test$indicator___  <- as.numeric(data_test[, v] == lev[k])
+            fit_train <- fit_model(outcome = "indicator___", labeled = labeled, prediction = prediction,
+                                   covariates = covariates_use,
+                                   data = data_train[data_train[, labeled] == 1, , drop = FALSE],
+                                   seed = seed, method = sl_method, family = family)
+            out_test <- fit_test(fit_out = fit_train,
+                                 outcome = "indicator___", labeled = labeled, covariates = covariates_use,
+                                 method = sl_method, family = family,
+                                 data = data_test, seed = seed)
+            prob_test[, k] <- pmin(pmax(out_test$Y_hat, 0), 1)
+            RMSE_k <- c(RMSE_k, out_test$RMSE)
+          }
+          if(length(lev) == 2){
+            prob_test[, 1] <- 1 - prob_test[, 2]
+          }
+          prob_sum <- rowSums(prob_test)
+          prob_test[prob_sum == 0, ] <- 1
+          prob_test <- prob_test/rowSums(prob_test)
 
-        # Predict E(predicted_var | covariates_use, R = 1) in the test data
-        out_test <- fit_test(fit_out = fit_train,
-                             outcome = predicted_var[v_use], labeled = labeled, covariates = covariates_use,
-                             method = sl_method, family = family,
-                             data = data_test, seed = seed)
+          # placeholder for the column of the predicted covariate (the moments use prob_test)
+          if(is.factor(data[, v]) == TRUE){
+            predicted_var_test <- rep(lev[1], nrow(data_test))  # converted to a factor below
+          }else{
+            predicted_var_test <- prob_test[, 2]
+          }
+          if(i_use == 1){
+            dm_prob[[v]] <- prob_test
+          }else{
+            dm_prob[[v]] <- rbind(prob_test, dm_prob[[v]])
+          }
+          RMSE_test <- mean(RMSE_k)
+        }else{
+          fit_train <- fit_model(outcome = v, labeled = labeled, prediction = prediction,
+                                 covariates = covariates_use,
+                                 data = data_train[data_train[, labeled] == 1, , drop = FALSE],
+                                 seed = seed, method = sl_method, family = family)
 
-        predicted_var_test <- out_test$Y_hat
+          # Predict E(predicted_var | covariates_use, R = 1) in the test data
+          out_test <- fit_test(fit_out = fit_train,
+                               outcome = v, labeled = labeled, covariates = covariates_use,
+                               method = sl_method, family = family,
+                               data = data_test, seed = seed)
+
+          # Predictions are kept within the range of the labeled outcome in the training data
+          # (some learners, e.g., with the log link, extrapolate explosively)
+          range_train <- range(data_train[data_train[, labeled] == 1, v])
+          predicted_var_test <- pmin(pmax(out_test$Y_hat, range_train[1]), range_train[2])
+          RMSE_test <- out_test$RMSE
+        }
 
         # Store results
         if(i_use == 1){
@@ -279,7 +409,7 @@ dsl <- function(model = "lm",
           dm_predicted_var[[v_use]] <- c(predicted_var_test, dm_predicted_var[[v_use]])
         }
 
-        RMSE_cv0[v_use, i_use] <- out_test$RMSE
+        RMSE_cv0[v_use, i_use] <- RMSE_test
       }
       rm(data_train)
       rm(data_test)
@@ -291,12 +421,20 @@ dsl <- function(model = "lm",
     # data we use for estimation
     data_pred <- data_orig <- data[id_final, , drop = FALSE]
 
-    data_pred[, predicted_var] <- do.call("cbind", dm_predicted_var)
+    for(v_use in 1:length(predicted_var)){
+      if(is.factor(data[, predicted_var[v_use]]) == TRUE){
+        data_pred[, predicted_var[v_use]] <- factor(dm_predicted_var[[v_use]], levels = levels(data[, predicted_var[v_use]]))
+      }else{
+        data_pred[, predicted_var[v_use]] <- dm_predicted_var[[v_use]]
+      }
+    }
+    RMSE_cv[1:length(predicted_var), ss_use] <- apply(RMSE_cv0, 1, mean, na.rm = TRUE)
 
     # ##############
     # DSL Estimator
     # ##############
-    fit_dm <- dsl_general_moment_est(model = model,
+    # (count models) When the moment conditions cannot be solved in this sample split, we drop the split (see below)
+    fit_dm <- tryCatch(dsl_general_moment_est(model = model,
                                      formula = formula,
                                      labeled = labeled,
                                      sample_prob = sample_prob,
@@ -307,7 +445,24 @@ dsl <- function(model = "lm",
                                      fixed_effect = fixed_effect,
                                      clustered = clustered,
                                      optim_method = optim_method,
-                                     lambda = lambda)
+                                     lambda = lambda,
+                                     pred_levels = pred_levels,
+                                     pred_prob = dm_prob),
+                       dsl_convergence = function(e) e)
+    if(inherits(fit_dm, "dsl_convergence") == TRUE){
+      split_fail[ss_use] <- TRUE
+      message_fail <- unique(c(message_fail, conditionMessage(fit_dm)))
+      next
+    }
+    coef_name <- names(fit_dm$coefficients)
+    cluster_note <- fit_dm$cluster_note
+
+    # (fepois, fenegbin with predicted covariates and `cluster`) the index whose fixed effects are estimated as parameters
+    # can be the one with more levels (see `dsl_general_moment_est`)
+    if(ncol(fit_dm$J) != ncol_X_exp){
+      ncol_X_exp <- ncol(fit_dm$J)
+      dm_vcov_main_1_l <- dm_vcov_main_23_l <- dm_vcov_J_l <- array(NA, dim = c(ncol_X_exp, ncol_X_exp, sample_split))
+    }
 
     dm_point_l[ss_use, 1:ncol_X] <- fit_dm$coefficients
     dm_se_l[ss_use, 1:ncol_X]    <- fit_dm$standard_errors
@@ -319,10 +474,27 @@ dsl <- function(model = "lm",
     dm_vcov_J_l[1:ncol_X_exp, 1:ncol_X_exp, ss_use] <- as.matrix(fit_dm$J)
     dm_vcov_D_l[1:ncol_X, 1:ncol_X, ss_use] <- fit_dm$D
     dm_theta_l[ss_use] <- fit_dm$theta
-
-    RMSE_cv[1:length(predicted_var), ss_use] <- apply(RMSE_cv0, 1, mean, na.rm = TRUE)
   }
   rm(data)
+
+  # Sample splits whose moment conditions could not be solved are dropped
+  if(all(split_fail) == TRUE){
+    stop(paste(message_fail, collapse = " | "), call. = FALSE)
+  }
+  if(any(split_fail) == TRUE){
+    warning(paste0(sum(split_fail), " of ", sample_split, " sample splits were dropped because the estimation failed:", paste(message_fail, collapse = " | ")), call. = FALSE)
+    keep <- (split_fail == FALSE)
+    RMSE_cv <- RMSE_cv[, keep, drop = FALSE]
+    dm_point_l <- dm_point_l[keep, , drop = FALSE]
+    dm_se_l <- dm_se_l[keep, , drop = FALSE]
+    dm_vcov_l <- dm_vcov_l[, , keep, drop = FALSE]
+    dm_vcov_main_1_l <- dm_vcov_main_1_l[, , keep, drop = FALSE]
+    dm_vcov_main_23_l <- dm_vcov_main_23_l[, , keep, drop = FALSE]
+    dm_vcov_J_l <- dm_vcov_J_l[, , keep, drop = FALSE]
+    dm_vcov_D_l <- dm_vcov_D_l[, , keep, drop = FALSE]
+    dm_theta_l <- dm_theta_l[keep]
+    sample_split <- sum(keep)
+  }
 
   # ################################
   # Combine across sampling-splitting (Take into account the variation across sample splitting)
@@ -332,7 +504,7 @@ dsl <- function(model = "lm",
   dm_point <- apply(dm_point_l, 2, median)
   dm_se_0  <- dm_se_l^2 + (t(t(dm_point_l) - dm_point))^2
   dm_se    <- sqrt(apply(dm_se_0, 2, median))
-  names(dm_point) <- names(dm_se) <- names(fit_dm$coef)
+  names(dm_point) <- names(dm_se) <- coef_name
 
   # vcov (Take into account the variation across sample splitting)
   dm_vcov_mat <- array(NA, dim = c(ncol_X, ncol_X, sample_split))
@@ -350,7 +522,7 @@ dsl <- function(model = "lm",
   internal <- list("formula" = formula, "model" = model,
                    "predicted_var" = predicted_var, "prediction" = prediction,
                    "num_expert" = num_expert, "equal_prob" = equal_prob, "num_data" = num_data,
-                   "cluster" = cluster,
+                   "cluster" = cluster, "cluster_note" = cluster_note,
                    "index" = index, "fixed_effect" = fixed_effect,
                    "sl_method"= sl_method, "feature" = feature, "cross_fit" = cross_fit, "sample_split" = sample_split,
                    "vcov_main_1" = dm_vcov_main_1_l,
